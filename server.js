@@ -10,6 +10,15 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
+const XLSX = require('xlsx');
+
+// Datos base (la "foto" original de propiedades/propietarios/inquilinos con la
+// que arrancó la app). Los cambios reales viven en Neon (prop_overrides, etc.)
+// y se combinan con esto, igual que hace el navegador.
+const BASE_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'base-data.json'), 'utf8'));
+
+// Mismos conceptos que usa el formulario de Recibos en la web.
+const CONCEPTOS_RECIBO = ['Alquiler','Gastos administrativos','Punitorios','Municipal (TGI)','Inmobiliario (API)','Aguas Provinciales','Luz (EPE)','Gas (Litoral Gas)','Expensas','Seguro','Otro','Honorarios','Sellado','Averiguaciones'];
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
@@ -128,6 +137,157 @@ app.get('/api/backup', async (req, res) => {
   const data = {};
   for (const r of rows) data[r.key] = r.value;
   res.json({ ok: true, data, file: 'backup_dg_inmo_' + new Date().toISOString().slice(0, 10) + '.json' });
+});
+
+// ============================================================
+// EXPORTACIONES AUTOMÁTICAS (Propiedades mensual, Recibos semanal)
+// Reconstruyen los mismos datos que ve la web (base + overrides guardados
+// en Neon) y arman un Excel, para que una tarea programada en la PC del
+// usuario pueda descargarlos solos, sin abrir el navegador.
+// ============================================================
+async function getKv(key, fallback) {
+  const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
+  return rows[0] ? rows[0].value : fallback;
+}
+
+async function getMergedProps() {
+  const overrides = await getKv('prop_overrides', {});
+  const additions = await getKv('prop_additions', []);
+  const deleted = new Set((await getKv('prop_deleted', [])).map(String));
+  const base = BASE_DATA.INIT_PROPS.map((p, i) => {
+    const id = 'p_' + i;
+    return Object.assign({}, p, { id }, overrides[id] || {});
+  }).filter(p => !deleted.has(String(p.id)));
+  return base.concat(additions);
+}
+
+async function getMergedOwners() {
+  const overrides = await getKv('owner_overrides', {});
+  const additions = await getKv('owner_additions', []);
+  const base = BASE_DATA.INIT_OWNERS.map(o => {
+    const id = String(o.id || '').startsWith('o_') ? o.id : ('o_' + o.id);
+    return Object.assign({}, o, { id }, overrides[id] || {});
+  });
+  return base.concat(additions);
+}
+
+function getOwnerNameFor(carpeta, owners) {
+  for (const o of owners) {
+    const cs = (o.carpetas || '').split(',').map(c => c.trim());
+    if (cs.includes(String(carpeta))) return `${o.nombre || ''} ${o.apellido || ''}`.trim();
+  }
+  return '-';
+}
+
+// Convierte fechas guardadas en cualquier formato a un objeto Date real
+// (para que Excel las reconozca como fecha), o '' si no hay/och es inválida.
+function excelDate(v) {
+  if (!v) return '';
+  try {
+    const clean = String(v).split('T')[0].split(' ')[0];
+    let d;
+    if (clean.includes('/')) {
+      const [day, mon, yr] = clean.split('/');
+      d = new Date(`${yr}-${mon.padStart(2, '0')}-${day.padStart(2, '0')}T00:00:00`);
+    } else {
+      d = new Date(clean + 'T00:00:00');
+    }
+    return isNaN(d) ? '' : d;
+  } catch { return ''; }
+}
+function excelNum(v) {
+  if (v === undefined || v === null || v === '') return '';
+  const n = parseFloat(v);
+  return isNaN(n) ? '' : n;
+}
+
+function sendXlsx(res, rows, filename) {
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Datos');
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buf);
+}
+
+// GET /api/export/propiedades.xlsx  -> mismas columnas y orden que la pestaña Propiedades
+app.get('/api/export/propiedades.xlsx', async (req, res) => {
+  try {
+    const props = (await getMergedProps()).filter(p => p.carpeta && p.carpeta !== '-');
+    const owners = await getMergedOwners();
+    const rows = props.map(p => ({
+      'Carpeta': p.carpeta || '',
+      'Dirección': p.direccion || '',
+      'Tipo': p.tipo || '',
+      'Inquilino': p.nombre_inq ? `${p.nombre_inq} ${p.apellido_inq || ''}`.trim() : '',
+      'Estado': p.estado || '',
+      'Alquiler actual': excelNum(p.alquiler),
+      'Comisión': excelNum(p.comision),
+      'Gs. Admin.': excelNum(p.gastos),
+      'F. Inicio': excelDate(p.fecha_inicio),
+      'Monto Inicial': excelNum(p.monto_inicial),
+      'Ajuste': p.ajuste || '',
+      'Próx. ajuste': excelDate(p.prox_act),
+      'Fin contrato': excelDate(p.fecha_fin),
+      'Propietario': getOwnerNameFor(p.carpeta, owners),
+      'Observaciones': p.observaciones || ''
+    }));
+    sendXlsx(res, rows, 'Propiedades.xlsx');
+  } catch (e) {
+    console.error('Error exportando propiedades:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /api/export/recibos.xlsx?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+// Sin parámetros, exporta TODOS los recibos. Con desde/hasta, filtra por fecha
+// (para el archivo semanal).
+app.get('/api/export/recibos.xlsx', async (req, res) => {
+  try {
+    let data = await getKv('recibo_data', []);
+    const { desde, hasta } = req.query;
+    if (desde) data = data.filter(r => r.fecha && r.fecha >= desde);
+    if (hasta) data = data.filter(r => r.fecha && r.fecha <= hasta);
+    const rows = data.map(r => {
+      const row = {
+        'Nro Recibo': r.numero || '',
+        'Fecha': excelDate(r.fecha),
+        'Carpeta': r.carpeta || '',
+        'Locatario': r.locatario || '',
+        'Domicilio': r.domicilio || '',
+        'Período general': r.periodo || ''
+      };
+      CONCEPTOS_RECIBO.forEach(c => {
+        row[c + ' - Período'] = (r.periodos && r.periodos[c]) ? r.periodos[c] : '';
+        row[c + ' - Valor'] = (r.conceptos && r.conceptos[c]) ? excelNum(r.conceptos[c]) : '';
+      });
+      row['TOTAL'] = excelNum(r.total);
+      return row;
+    });
+    const filename = (desde || hasta) ? `Recibos_${desde || 'inicio'}_a_${hasta || 'hoy'}.xlsx` : 'Recibos_Todos.xlsx';
+    sendXlsx(res, rows, filename);
+  } catch (e) {
+    console.error('Error exportando recibos:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /api/export/backup.json -> backup completo, en el mismo formato que usa
+// la web para "Importar backup" (por si algún día hay que restaurar desde acá).
+app.get('/api/export/backup.json', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT key, value FROM kv_store');
+    const datos = {};
+    for (const r of rows) datos[r.key] = r.value;
+    const backup = { version: 3, fecha: new Date().toISOString(), datos };
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="backup.json"');
+    res.send(JSON.stringify(backup));
+  } catch (e) {
+    console.error('Error exportando backup:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // ---- Usuarios / login ----
