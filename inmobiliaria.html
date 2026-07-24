@@ -7372,24 +7372,102 @@ function exportNumeracionXLSX() {
   showToast('Excel exportado ✓');
 }
 
+// Convierte un valor de fecha guardado en cualquier formato (dd/mm/yyyy, yyyy-mm-dd,
+// con u sin hora, etc.) a un objeto Date real, para que Excel lo reconozca como fecha
+// (celda con formato fecha, no texto). Si no hay fecha válida, devuelve ''.
+function excelDate(v) {
+  const d = parseDate(v);
+  return (d && !isNaN(d)) ? d : '';
+}
+// Convierte un valor monetario guardado como texto a número real (para que Excel
+// lo trate como número, permitiendo sumar/filtrar). Si está vacío, devuelve ''.
+function excelNum(v) {
+  if (v === undefined || v === null || v === '') return '';
+  const n = parseFloat(v);
+  return isNaN(n) ? '' : n;
+}
+
 function exportExcel(tipo) {
   let rows=[], filename='';
   if(tipo==='propiedades'){
-    const data=getData('prop_data');
-    rows=data.map(p=>({Carpeta:p.carpeta,Dirección:p.direccion,Propietario:p.propietario,Inquilino:p.inquilino,Alquiler:p.alquiler,Estado:p.estado,Inicio:p.fecha_inicio,Fin:p.fecha_fin,Ajuste:p.ajuste}));
+    const data=getData('prop_data').filter(p=>p.carpeta&&p.carpeta!=='-');
+    // Mismas columnas, mismo orden, que la tabla de la pestaña "Propiedades"
+    rows=data.map(p=>({
+      'Carpeta': p.carpeta||'',
+      'Dirección': p.direccion||'',
+      'Tipo': p.tipo||'',
+      'Inquilino': p.nombre_inq ? `${p.nombre_inq} ${p.apellido_inq||''}`.trim() : '',
+      'Estado': p.estado||'',
+      'Alquiler actual': excelNum(p.alquiler),
+      'Comisión': excelNum(p.comision),
+      'Gs. Admin.': excelNum(p.gastos),
+      'F. Inicio': excelDate(p.fecha_inicio),
+      'Monto Inicial': excelNum(p.monto_inicial),
+      'Ajuste': p.ajuste||'',
+      'Próx. ajuste': excelDate(p.prox_act),
+      'Fin contrato': excelDate(p.fecha_fin),
+      'Propietario': getOwnerName(p.carpeta)||'',
+      'Observaciones': p.observaciones||''
+    }));
     filename='Propiedades.xlsx';
   } else if(tipo==='propietarios'){
     const data=getData('owner_data');
-    rows=data.map(o=>({Nombre:o.nombre,Apellido:o.apellido,DNI:o.dni,Teléfono:o.telefono,Email:o.email,Carpetas:o.carpetas}));
+    rows=data.map(o=>({
+      'Carpetas': o.carpetas||'',
+      'Nombre': `${o.nombre||''} ${o.apellido||''}`.trim(),
+      'Localidad': o.localidad||'',
+      'Teléfono': o.telefono||'',
+      'Email': o.email||'',
+      'DNI': o.dni||'',
+      'CUIT': o.cuit||'',
+      'Banco': o.banco||'',
+      'Alias': o.alias||'',
+      'CBU': o.cbu||''
+    }));
     filename='Propietarios.xlsx';
   } else if(tipo==='inquilinos'){
     const data=getData('tenant_data');
-    rows=data.map(t=>({Nombre:t.nombre,Apellido:t.apellido,DNI:t.dni,Teléfono:t.telefono,Email:t.email,Carpeta:t.carpeta}));
+    const props=getData('prop_data');
+    rows=data.map(t=>{
+      const prop=props.find(p=>String(p.carpeta)===String(t.carpeta));
+      return {
+        'Carpeta': t.carpeta||'',
+        'Nombre': t.nombre||'',
+        'Apellido': t.apellido||'',
+        'DNI': t.dni||'',
+        'Teléfono': t.telefono||'',
+        'Propiedad': prop ? (prop.direccion||'') : '',
+        'Garante 1': t.garante1||'',
+        'Tel. Garante 1': t.tel_g1||'',
+        'Garante 2': t.garante2||'',
+        'Tel. Garante 2': t.tel_g2||'',
+        'Garante 3': t.garante3||'',
+        'Tel. Garante 3': t.tel_g3||''
+      };
+    });
     filename='Inquilinos.xlsx';
   } else if(tipo==='recibos'||tipo==='recibos_hoy'){
     let data=getData('recibo_data');
     if(tipo==='recibos_hoy'){const hoy=new Date().toISOString().split('T')[0];data=data.filter(r=>r.fecha===hoy);}
-    rows=data.map(r=>({Número:r.numero,Fecha:r.fecha,Carpeta:r.carpeta,Locatario:r.locatario,Alquiler:r.alquiler,Total:r.total}));
+    rows=data.map(r=>{
+      const row={
+        'Nro Recibo': r.numero||'',
+        'Fecha': excelDate(r.fecha),
+        'Carpeta': r.carpeta||'',
+        'Locatario': r.locatario||'',
+        'Domicilio': r.domicilio||'',
+        'Período general': r.periodo||''
+      };
+      // Una columna de Período y otra de Valor por cada concepto posible del recibo
+      // (Alquiler, TGI, Expensas, Honorarios, etc.), para ver de un vistazo qué se
+      // cobró y qué no en cada período.
+      CONCEPTOS_RECIBO.forEach(c=>{
+        row[c+' - Período'] = (r.periodos && r.periodos[c]) ? r.periodos[c] : '';
+        row[c+' - Valor'] = (r.conceptos && r.conceptos[c]) ? excelNum(r.conceptos[c]) : '';
+      });
+      row['TOTAL'] = excelNum(r.total);
+      return row;
+    });
     filename=tipo==='recibos_hoy'?'Recibos_Hoy.xlsx':'Recibos_Todos.xlsx';
   }
   if(!rows.length){alert('No hay datos para exportar');return;}
@@ -8407,7 +8485,10 @@ function generarDocumento(modoDescarga) {
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:'Times New Roman', Times, serif; background:#fff; color:#222; }
-  @page { size: A4; margin: 0; }
+  /* Margen real en CADA hoja impresa (no solo la primera). Sin esto, las hojas
+     2da en adelante salían con margen 0 y el texto quedaba pegado al borde del
+     papel, que muchas impresoras no pueden imprimir → se veía "cortado". */
+  @page { size: A4; margin: 18mm 16mm 20mm 16mm; }
   .hoja {
     width: 210mm;
     min-height: 297mm;
@@ -8465,7 +8546,21 @@ function generarDocumento(modoDescarga) {
   .btn-descargar { background: #c9a227; color: #fff; }
   @media print {
     body { background: #fff !important; }
-    .hoja { margin: 0; }
+    .hoja { margin: 0; width: auto; min-height: 0; }
+    /* El margen de página ahora lo da @page en cada hoja; achicamos el padding
+       interno para no duplicar espacio en blanco. */
+    .doc-body { padding: 6px 0 0 0; }
+    .header-doc { margin: 0 0 4mm 0; }
+    /* Evitar que el encabezado, el bloque de asunto/destinatario o un párrafo
+       queden partidos justo en el salto de página. */
+    .header-doc, .doc-asunto-block, .doc-dest-block, .doc-inmueble-block {
+      page-break-inside: avoid;
+    }
+    .doc-cuerpo p {
+      orphans: 3;
+      widows: 3;
+      page-break-inside: avoid;
+    }
     .toolbar-print { display: none !important; }
   }
 </style>
