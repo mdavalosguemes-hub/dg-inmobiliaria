@@ -7965,7 +7965,7 @@ function saveAjusteProp() {
     const idx = data.findIndex(x=>String(x.id)===String(ajpropCurrentId));
     if(idx>=0) data[idx]=doc; else data.push(doc);
   } else data.push(doc);
-  localStorage.setItem('ajprop_data', JSON.stringify(data));
+  setData('ajprop_data', data);
   ajpropCurrentId = null;
   renderAjusteProp();
   // Limpiar form
@@ -8033,7 +8033,7 @@ function getData_ajprop() {
 function deleteAjusteProp(id) {
   if(!confirm('¿Eliminar este ajuste proporcional?')) return;
   const data = getData('ajprop_data').filter(x=>String(x.id)!==String(id));
-  localStorage.setItem('ajprop_data', JSON.stringify(data));
+  setData('ajprop_data', data);
   renderAjusteProp();
   showToast('Eliminado');
 }
