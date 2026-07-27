@@ -2422,6 +2422,7 @@ function alqGetStoredProps(mes, anio) {
         trans_inm:  null
       }));
       localStorage.setItem(key, JSON.stringify(copia));
+      setData(key, copia);
       return copia;
     }
   }
@@ -2429,6 +2430,7 @@ function alqGetStoredProps(mes, anio) {
   // Si no hay ningún mes previo, usar la base original
   const base = JSON.parse(JSON.stringify(ALQ_BASE_DATA));
   localStorage.setItem(key, JSON.stringify(base));
+  setData(key, base);
   return base;
 }
 
@@ -2436,6 +2438,7 @@ function alqGetStoredProps(mes, anio) {
 function alqSaveProps(mes, anio, props) {
   const key = `alq_props_${anio}_${mes}`;
   localStorage.setItem(key, JSON.stringify(props));
+  setData(key, props);
 }
 
 function alqCalcCard(idx) {
@@ -3124,6 +3127,7 @@ function alqPropagarAFuturo(mesOrigen, anioOrigen, prop) {
     if (!yaExiste) {
       futuros.push({ ...prop, trans_prop: null, trans_inm: null });
       localStorage.setItem(key, JSON.stringify(futuros));
+      setData(key, futuros);
     }
   }
 }
@@ -4943,6 +4947,7 @@ function printLlaves() {
     obs: obs
   });
   localStorage.setItem('recibos_llaves', JSON.stringify(recibosLlaves));
+  setData('recibos_llaves', recibosLlaves);
   showToast('Recibo de llaves guardado', 'success');
 
   // Cerrar el modal y llevar al usuario a la lista de Recibos de Llaves
@@ -6348,6 +6353,7 @@ function saveFichaVenta() {
   if(currentId) { const idx=data.findIndex(x=>String(x.id)===String(currentId)); if(idx>=0) data[idx]=f; }
   else data.push(f);
   localStorage.setItem('fichas_venta_data', JSON.stringify(data));
+  setData('fichas_venta_data', data);
   closeModal('modal-ficha-venta'); renderFichasVenta(); showToast('Ficha de venta guardada ✓');
 }
 
@@ -6526,6 +6532,7 @@ function saveFichaAlquiler() {
   if(currentId) { const idx = data.findIndex(x => String(x.id) === String(currentId)); if(idx>=0) data[idx]=f; }
   else data.push(f);
   localStorage.setItem('fichas_alquiler_data', JSON.stringify(data));
+  setData('fichas_alquiler_data', data);
   closeModal('modal-ficha-alquiler'); renderFichasAlquiler(); showToast('Ficha de alquiler guardada ✓');
 }
 
@@ -8299,6 +8306,7 @@ function getDocsGuardados() {
 }
 function saveDocsGuardados(docs) {
   localStorage.setItem('dg_docs_escritura', JSON.stringify(docs));
+  setData('dg_docs_escritura', docs);
 }
 
 let docNombreActual = '';
@@ -8666,6 +8674,7 @@ function eliminarReciboLlaves(id) {
   let arr = JSON.parse(localStorage.getItem('recibos_llaves') || '[]');
   arr = arr.filter(r => r.id !== id);
   localStorage.setItem('recibos_llaves', JSON.stringify(arr));
+  setData('recibos_llaves', arr);
   renderRecibosLlaves();
   showToast('Recibo eliminado');
 }
