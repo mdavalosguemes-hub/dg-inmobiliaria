@@ -1286,6 +1286,7 @@
       <button class="modal-tab" onclick="switchTab(this,'tab-prop-impuestos')">Impuestos</button>
       <button class="modal-tab" onclick="switchTab(this,'tab-prop-desocupado')">Desocupado</button>
       <button class="modal-tab" onclick="switchTab(this,'tab-prop-propietario');cargarPropietarioDesdeProp()">Propietario</button>
+      <button class="modal-tab" onclick="switchTab(this,'tab-prop-historico');cargarValoresHistoricos()">Valores Históricos</button>
     </div>
     <div class="modal-body">
       <div id="tab-prop-general" class="tab-pane active">
@@ -1393,6 +1394,19 @@
           </div>
         </div>
       </div>
+      <div id="tab-prop-historico" class="tab-pane">
+        <div class="form-section">
+          <div class="form-section-title" style="display:flex;justify-content:space-between;align-items:center">
+            Valores históricos de alquiler
+            <select class="form-control" id="vh_anio" style="max-width:120px" onchange="renderValoresHistoricosMeses()"></select>
+          </div>
+          <div id="vh-meses-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px"></div>
+          <p style="font-size:12px;color:var(--text-muted);margin-top:12px">
+            Estos valores se registran solos cada vez que actualizás el alquiler (por ajuste o renovación),
+            pero podés editar cualquier mes a mano cuando quieras — se guarda automáticamente al salir del campo.
+          </p>
+        </div>
+      </div>
     </div><!-- /modal-body -->
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-propiedad')">Cancelar</button>
@@ -1488,6 +1502,11 @@
             <div class="form-group full"><label>CBU</label><input type="text" class="form-control" id="o_cbu"></div>
           </div>
         </div>
+        <div class="form-section"><div class="form-section-title">Observaciones</div>
+          <div class="form-grid">
+            <div class="form-group full"><textarea class="form-control" id="o_observaciones" rows="3" placeholder="Notas, aclaraciones u observaciones sobre este propietario..."></textarea></div>
+          </div>
+        </div>
       </div>
       <div id="tab-owner-propiedades" class="tab-pane">
         <div class="form-section">
@@ -1558,7 +1577,7 @@
         <div class="form-section"><div class="form-section-title">Identificación del contrato</div>
           <div class="form-grid">
             <div class="form-group"><label>Tipo de contrato</label>
-              <select class="form-control" id="c_tipo" onchange="updateContratoPreview()">
+              <select class="form-control" id="c_tipo" onchange="autoFillContrato()">
                 <option value="">Seleccionar</option>
                 <option value="dpto">Departamento (Vivienda)</option>
                 <option value="casa">Casa (Vivienda)</option>
@@ -2194,6 +2213,79 @@ function getOwnerName(carpeta) {
   const owners=getData('owner_data');
   for(const o of owners) { const cs=(o.carpetas||'').split(',').map(c=>c.trim()); if(cs.includes(String(carpeta))) return (o.nombre||'')+' '+(o.apellido||''); }
   return '-';
+}
+
+// ============================================================
+// VALORES HISTÓRICOS DE ALQUILER (por propiedad, año y mes)
+// Estructura: { "<carpeta>": { "<año>": { "<mes 1-12>": valor } } }
+// ============================================================
+const MESES_CORTOS_HIST = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+const ANIO_MIN_HISTORICO = 2024;
+
+function getValoresHistoricos() {
+  return getData('valores_historicos') || {};
+}
+
+function setValorHistorico(carpeta, anio, mes, valor) {
+  if (!carpeta) return;
+  const all = getValoresHistoricos();
+  if (!all[carpeta]) all[carpeta] = {};
+  if (!all[carpeta][anio]) all[carpeta][anio] = {};
+  all[carpeta][anio][mes] = valor;
+  setData('valores_historicos', all);
+}
+
+// Se llama automáticamente cada vez que se actualiza el alquiler de una
+// propiedad (guardado directo, ajuste o renovación), para ir dejando
+// registro mes a mes. El usuario igual puede editar cualquier valor a mano
+// desde la pestaña "Valores Históricos".
+function registrarValorHistoricoAutomatico(carpeta, alquiler, fechaRef) {
+  if (!carpeta || !alquiler) return;
+  let d = null;
+  if (fechaRef instanceof Date) d = fechaRef;
+  else if (fechaRef) d = parseDate(fechaRef);
+  if (!d || isNaN(d)) d = new Date();
+  const anio = d.getFullYear();
+  if (anio < ANIO_MIN_HISTORICO) return;
+  const mes = d.getMonth() + 1;
+  setValorHistorico(String(carpeta), String(anio), String(mes), alquiler);
+}
+
+function cargarValoresHistoricos() {
+  const anioSel = document.getElementById('vh_anio');
+  if (!anioSel) return;
+  const anioActual = new Date().getFullYear();
+  const anios = [];
+  for (let y = ANIO_MIN_HISTORICO; y <= anioActual + 1; y++) anios.push(y);
+  anioSel.innerHTML = anios.map(y => `<option value="${y}" ${y===anioActual?'selected':''}>${y}</option>`).join('');
+  renderValoresHistoricosMeses();
+}
+
+function renderValoresHistoricosMeses() {
+  const carpeta = (document.getElementById('p_carpeta').value || '').trim();
+  const anio = document.getElementById('vh_anio').value;
+  const all = getValoresHistoricos();
+  const datosAnio = (all[carpeta] && all[carpeta][anio]) || {};
+  const grid = document.getElementById('vh-meses-grid');
+  if (!grid) return;
+  grid.innerHTML = MESES_CORTOS_HIST.map((nombreMes, i) => {
+    const mes = i + 1;
+    const val = datosAnio[String(mes)] || '';
+    return `<div class="form-group">
+      <label>${nombreMes}</label>
+      <input type="number" class="form-control" id="vh_mes_${mes}" value="${val}"
+        onchange="guardarValorHistoricoMes(${mes})" placeholder="-">
+    </div>`;
+  }).join('');
+}
+
+function guardarValorHistoricoMes(mes) {
+  const carpeta = (document.getElementById('p_carpeta').value || '').trim();
+  if (!carpeta) { showToast('Primero ingresá el número de carpeta', 'error'); return; }
+  const anio = document.getElementById('vh_anio').value;
+  const valor = document.getElementById('vh_mes_' + mes).value;
+  setValorHistorico(carpeta, anio, String(mes), valor);
+  showToast('Valor histórico guardado', 'success');
 }
 
 // ============================================================
@@ -3513,7 +3605,7 @@ function saveProp() {
   if(currentId) { const idx=data.findIndex(x=>String(x.id)===String(currentId)); if(idx>=0) data[idx]={...data[idx],...updated}; }
   else { updated.id=Date.now(); data.push(updated); }
   setData('prop_data',data);
-  // Sincronizar datos de inquilino en tenant_data
+  registrarValorHistoricoAutomatico(updated.carpeta, updated.alquiler, new Date());
   const carpeta = updated.carpeta;
   const nombre  = updated.nombre_inq || '';
   const apellido= updated.apellido_inq || '';
@@ -4110,19 +4202,19 @@ function renderPropietarios() {
   </tr>`).join('');
   renderPag('pag-propietarios',ps,filtered.length);
 }
-function newOwner() { currentId=null; currentType='propietario'; document.getElementById('modal-owner-title').textContent='Nuevo Propietario'; document.getElementById('btn-del-owner').style.display='none'; ['carpetas','nombre','apellido','localidad','dir','tel','dni','email','cuit','banco','cta','alias','cbu'].forEach(k=>{const el=document.getElementById('o_'+k);if(el)el.value='';}); openModal('modal-propietario'); }
+function newOwner() { currentId=null; currentType='propietario'; document.getElementById('modal-owner-title').textContent='Nuevo Propietario'; document.getElementById('btn-del-owner').style.display='none'; ['carpetas','nombre','apellido','localidad','dir','tel','dni','email','cuit','banco','cta','alias','cbu','observaciones'].forEach(k=>{const el=document.getElementById('o_'+k);if(el)el.value='';}); openModal('modal-propietario'); }
 function editOwner(id) {
   const o=getData('owner_data').find(x=>String(x.id)===String(id)); if(!o) return;
   currentId=id; currentType='propietario';
   document.getElementById('modal-owner-title').textContent=(o.nombre||'')+' '+(o.apellido||'');
   document.getElementById('btn-del-owner').style.display='inline-flex';
-  const map={carpetas:'carpetas',nombre:'nombre',apellido:'apellido',localidad:'localidad',dir:'direccion',tel:'telefono',dni:'dni',email:'email',cuit:'cuit',banco:'banco',cta:'nro_cuenta',alias:'alias',cbu:'cbu',contacto_adicional:'contacto_adicional'};
+  const map={carpetas:'carpetas',nombre:'nombre',apellido:'apellido',localidad:'localidad',dir:'direccion',tel:'telefono',dni:'dni',email:'email',cuit:'cuit',banco:'banco',cta:'nro_cuenta',alias:'alias',cbu:'cbu',contacto_adicional:'contacto_adicional',observaciones:'observaciones'};
   for(const [k,f] of Object.entries(map)) { const el=document.getElementById('o_'+k); if(el) el.value=o[f]||''; }
   openModal('modal-propietario');
 }
 function saveOwner() {
   const data=getData('owner_data');
-  const fields={carpetas:'o_carpetas',nombre:'o_nombre',apellido:'o_apellido',localidad:'o_localidad',direccion:'o_dir',telefono:'o_tel',dni:'o_dni',email:'o_email',cuit:'o_cuit',banco:'o_banco',nro_cuenta:'o_cta',alias:'o_alias',cbu:'o_cbu',contacto_adicional:'o_contacto_adicional'};
+  const fields={carpetas:'o_carpetas',nombre:'o_nombre',apellido:'o_apellido',localidad:'o_localidad',direccion:'o_dir',telefono:'o_tel',dni:'o_dni',email:'o_email',cuit:'o_cuit',banco:'o_banco',nro_cuenta:'o_cta',alias:'o_alias',cbu:'o_cbu',contacto_adicional:'o_contacto_adicional',observaciones:'o_observaciones'};
   const updated={};
   for(const [k,elId] of Object.entries(fields)) { const el=document.getElementById(elId); updated[k]=el?el.value:''; }
   if(currentId) { const idx=data.findIndex(x=>String(x.id)===String(currentId)); if(idx>=0) data[idx]={...data[idx],...updated}; }
@@ -4249,8 +4341,8 @@ function renderContratos() {
   document.getElementById('contrato-count-info').textContent=`${slice.length} de ${filtered.length} contratos`;
   const typeLabel={dpto:'Departamento',casa:'Casa',comercio:'Comercial'};
   document.getElementById('tbody-contratos').innerHTML=slice.length===0?'<tr><td colspan="8" style="padding:30px;text-align:center;color:#5a6e82">No hay contratos a\u00fan. Cre\u00e1 el primero.</td></tr>':slice.map(c=>{
-    const inicio=c.dia_inicio&&c.mes_inicio?`${c.dia_inicio} ${c.mes_inicio} ${c.anio_inicio||''}`:'-';
-    const fin=c.dia_fin&&c.mes_fin?`${c.dia_fin} ${c.mes_fin} ${c.anio_fin||''}`:'-';
+    const inicio = c.fecha_inicio_date ? fmtDateClean(c.fecha_inicio_date) : '-';
+    const fin    = c.fecha_fin_date    ? fmtDateClean(c.fecha_fin_date)    : '-';
     return `<tr>
       <td><span class="carpeta-badge">${c.carpeta||'-'}</span></td>
       <td style="font-size:12px">${typeLabel[c.tipo]||c.tipo||'-'}</td>
@@ -4378,6 +4470,7 @@ function autoFillContrato() {
   }
 
   buildVarList(tipo, prefill);
+  updateContratoPreview();
 }
 
 
@@ -5531,6 +5624,7 @@ function saveDocRenov() {
       p.comision=String(Math.ceil(alq*0.08/100)*100);
       // Gastos admin 3% redondeado de a $100 hacia arriba
       p.gastos=String(Math.ceil(alq*0.03/100)*100);
+      registrarValorHistoricoAutomatico(carpeta, alq, doc.inicio);
     }
     if(doc.inicio) p.fecha_inicio=doc.inicio.includes('-')?(()=>{const[y,m,d]=doc.inicio.split('-');return`${d}/${m}/${y}`;})():doc.inicio;
     if(doc.fin)    p.fecha_fin   =doc.fin.includes('-')   ?(()=>{const[y,m,d]=doc.fin.split('-');   return`${d}/${m}/${y}`;})():doc.fin;
@@ -5925,6 +6019,7 @@ function saveDocAjuste() {
       p.comision=String(Math.ceil(alqNuevo*0.08/100)*100);
       // Gastos admin 3% redondeado de a $100 hacia arriba
       p.gastos=String(Math.ceil(alqNuevo*0.03/100)*100);
+      registrarValorHistoricoAutomatico(carpeta, alqNuevo, doc.desde);
     }
     const tipoAjusteDocEl = document.getElementById('da_tipo_ajuste');
     // === SINCRONIZAR TIPO DE AJUSTE ===
@@ -6784,39 +6879,80 @@ function enterLocalMode() {
   initBalanceAnios();
 }
 
+// ============================================================
+// SINCRONIZACIÓN ROBUSTA CON EL SERVIDOR
+// - Reintenta automáticamente si falla (ej: servidor "dormido")
+// - Avisa con un mensaje visible si, después de reintentar, no se pudo guardar
+// - Bloquea/advierte al cerrar la pestaña mientras haya guardados pendientes
+// ============================================================
+window._pendingSaves = 0;
+window._failedSaves = [];
+
+async function _postToServer(key, val, attempt) {
+  attempt = attempt || 1;
+  window._pendingSaves++;
+  try {
+    const res = await fetch(SERVER_URL + '/api/set', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value: val })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+  } catch (e) {
+    if (attempt < 4) {
+      // Reintentar con espera creciente (el servidor puede estar "despertando", tarda hasta ~50s)
+      await new Promise(r => setTimeout(r, attempt * 5000));
+      window._pendingSaves--;
+      return _postToServer(key, val, attempt + 1);
+    }
+    window._failedSaves.push({ key, fecha: new Date().toISOString() });
+    if (typeof showToast === 'function') {
+      showToast('⚠️ No se pudo guardar "' + key + '" en el servidor. No cierres la pestaña; revisá tu conexión y volvé a intentar.', 'error');
+    }
+    console.error('Fallo definitivo al guardar en el servidor:', key, e);
+  } finally {
+    window._pendingSaves--;
+  }
+}
+
 // Override de setData para sincronizar con servidor
 const _setDataOrig = setData;
 window.setData = function(key, val) {
   _setDataOrig(key, val);
   // Sincronizar con servidor en background
   if (!usingLocalMode) {
-    fetch(SERVER_URL + '/api/set', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key, value: val })
-    }).catch(()=>{});
-    
+    _postToServer(key, val);
+
     // Para overrides y additions también sincronizar
     if (key === 'prop_data') {
       const ov = JSON.parse(localStorage.getItem('prop_overrides') || '{}');
       const ad = JSON.parse(localStorage.getItem('prop_additions') || '[]');
-      fetch(SERVER_URL + '/api/set', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({key:'prop_overrides', value:ov}) }).catch(()=>{});
-      fetch(SERVER_URL + '/api/set', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({key:'prop_additions', value:ad}) }).catch(()=>{});
+      _postToServer('prop_overrides', ov);
+      _postToServer('prop_additions', ad);
     }
     if (key === 'owner_data') {
       const ov = JSON.parse(localStorage.getItem('owner_overrides') || '{}');
       const ad = JSON.parse(localStorage.getItem('owner_additions') || '[]');
-      fetch(SERVER_URL + '/api/set', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({key:'owner_overrides', value:ov}) }).catch(()=>{});
-      fetch(SERVER_URL + '/api/set', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({key:'owner_additions', value:ad}) }).catch(()=>{});
+      _postToServer('owner_overrides', ov);
+      _postToServer('owner_additions', ad);
     }
     if (key === 'tenant_data') {
       const ov = JSON.parse(localStorage.getItem('tenant_overrides') || '{}');
       const ad = JSON.parse(localStorage.getItem('tenant_additions') || '[]');
-      fetch(SERVER_URL + '/api/set', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({key:'tenant_overrides', value:ov}) }).catch(()=>{});
-      fetch(SERVER_URL + '/api/set', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({key:'tenant_additions', value:ad}) }).catch(()=>{});
+      _postToServer('tenant_overrides', ov);
+      _postToServer('tenant_additions', ad);
     }
   }
 };
+
+// Avisar/bloquear si se intenta cerrar la pestaña con guardados en curso
+window.addEventListener('beforeunload', function(e) {
+  if (window._pendingSaves > 0) {
+    e.preventDefault();
+    e.returnValue = 'Todavía se está guardando información en el servidor. Si cerrás ahora, podrías perder los últimos cambios.';
+    return e.returnValue;
+  }
+});
 
 // Funciones de UI de autenticación (compatibilidad con el HTML existente)
 function showAuthOverlay() {
