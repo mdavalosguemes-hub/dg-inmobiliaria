@@ -6737,13 +6737,66 @@ async function apiSet(key, value) {
   }
 }
 
+// ============================================================
+// COLA DE GUARDADOS PENDIENTES (persistente, sobrevive a cerrar la pestaña)
+// ------------------------------------------------------------
+// ANTES: si un guardado al servidor fallaba (ej: el servidor tardando en
+// "despertar"), eso quedaba solo en una variable de memoria (window._failedSaves)
+// que se perdía al cerrar o recargar la pestaña. Y como loadAllFromServer()
+// pisaba SIEMPRE el localStorage con lo último que hubiera en el servidor, la
+// próxima vez que se abría la web, ese cambio nunca guardado desaparecía
+// también del navegador — sin ningún aviso. Esta cola guarda en localStorage
+// qué claves todavía no se confirmaron en el servidor, para poder reintentarlas
+// y, sobre todo, para que loadAllFromServer() NUNCA pise una clave que todavía
+// tiene un cambio local pendiente de guardar.
+// ============================================================
+function _getPendingQueue() {
+  try { return JSON.parse(localStorage.getItem('dg_pending_queue') || '{}'); } catch(e) { return {}; }
+}
+function _setPendingQueue(q) {
+  try { localStorage.setItem('dg_pending_queue', JSON.stringify(q)); } catch(e) {}
+}
+function _markPending(key, val) {
+  const q = _getPendingQueue();
+  q[key] = { value: val, ts: Date.now() };
+  _setPendingQueue(q);
+}
+function _clearPending(key) {
+  const q = _getPendingQueue();
+  if (key in q) { delete q[key]; _setPendingQueue(q); }
+}
+
+// Reintenta mandar al servidor todo lo que haya quedado pendiente de una
+// sesión anterior (por ejemplo, porque se cerró la pestaña mientras el
+// servidor todavía estaba "despertando"). Se llama SIEMPRE antes de traer
+// datos del servidor, para no perder nada.
+async function _flushPendingQueue() {
+  const q = _getPendingQueue();
+  const keys = Object.keys(q);
+  if (!keys.length) return;
+  console.warn('Reintentando ' + keys.length + ' guardado(s) pendiente(s) de una sesión anterior:', keys);
+  for (const key of keys) {
+    await _postToServer(key, q[key].value);
+  }
+}
+
 async function loadAllFromServer() {
   try {
+    // 1) Primero, reintentar cualquier guardado que haya quedado pendiente.
+    //    Esto tiene que pasar ANTES de traer los datos del servidor: si lo
+    //    hacemos al revés, podríamos pisar un cambio local reciente con una
+    //    versión vieja del servidor antes de darle la chance de guardarse.
+    await _flushPendingQueue();
+
     const r = await fetch(SERVER_URL + '/api/all');
     const d = await r.json();
     if (d.ok && d.data) {
-      // Cargar todo en localStorage como caché
+      // 2) Cargar todo en localStorage como caché — pero NUNCA pisar una clave
+      //    que todavía tenga un guardado sin confirmar en el servidor (por más
+      //    que el flush de arriba haya fallado de nuevo, ej. servidor caído).
+      const pending = _getPendingQueue();
       Object.entries(d.data).forEach(([key, val]) => {
+        if (pending[key]) return;
         localStorage.setItem(key, JSON.stringify(val));
       });
       _serverDataLoaded = true;
@@ -6891,6 +6944,10 @@ window._failedSaves = [];
 async function _postToServer(key, val, attempt) {
   attempt = attempt || 1;
   window._pendingSaves++;
+  // Registrar como pendiente ANTES de intentar mandarlo: así, si se cierra la
+  // pestaña a mitad de camino, queda constancia en localStorage y se reintenta
+  // solo la próxima vez que se abra la web (ver _flushPendingQueue).
+  if (attempt === 1) _markPending(key, val);
   try {
     const res = await fetch(SERVER_URL + '/api/set', {
       method: 'POST',
@@ -6898,18 +6955,21 @@ async function _postToServer(key, val, attempt) {
       body: JSON.stringify({ key, value: val })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
+    _clearPending(key); // confirmado en el servidor: ya no hace falta reintentar
   } catch (e) {
-    if (attempt < 4) {
-      // Reintentar con espera creciente (el servidor puede estar "despertando", tarda hasta ~50s)
-      await new Promise(r => setTimeout(r, attempt * 5000));
+    if (attempt < 8) {
+      // Reintentar con espera creciente (el servidor puede estar "despertando", tarda hasta ~50s;
+      // con 8 intentos y tope de 15s cubrimos bastante más de eso)
+      await new Promise(r => setTimeout(r, Math.min(attempt * 6000, 15000)));
       window._pendingSaves--;
       return _postToServer(key, val, attempt + 1);
     }
     window._failedSaves.push({ key, fecha: new Date().toISOString() });
     if (typeof showToast === 'function') {
-      showToast('⚠️ No se pudo guardar "' + key + '" en el servidor. No cierres la pestaña; revisá tu conexión y volvé a intentar.', 'error');
+      showToast('⚠️ No se pudo guardar "' + key + '" en el servidor. Se reintentará solo al volver a abrir la web — no borres los datos del navegador mientras tanto.', 'error');
     }
-    console.error('Fallo definitivo al guardar en el servidor:', key, e);
+    console.error('Fallo definitivo al guardar en el servidor (queda pendiente para el próximo inicio):', key, e);
+    // OJO: se deja en la cola (_markPending ya la registró) para reintentar en el próximo loadAllFromServer().
   } finally {
     window._pendingSaves--;
   }
@@ -7703,15 +7763,31 @@ function importExcel(tipo, input) {
 // ============================================================
 // BACKUP / RESTAURAR
 // ============================================================
-function exportBackup() {
-  const keys = [
-    'prop_overrides','prop_additions',
+// Lista única y centralizada de todas las claves de datos de la app.
+// IMPORTANTE: antes había 2 listas hardcodeadas distintas (una acá y otra en
+// autoBackupSilent) que se fueron desactualizando cada vez que se agregaba un
+// módulo nuevo (ej: alquileres mensuales por mes) — eso hacía que esos módulos
+// quedaran afuera de los backups sin que nadie lo notara. Ahora hay una sola
+// función que además detecta automáticamente las claves 'alq_props_AÑO_MES'
+// (que se crean dinámicamente, una por cada mes visitado), para que un módulo
+// nuevo no se vuelva a "perder" silenciosamente de los backups.
+function _getAllAppDataKeys() {
+  const fijas = [
+    'prop_overrides','prop_additions','prop_deleted',
     'owner_overrides','owner_additions',
     'tenant_overrides','tenant_additions',
-    'recibo_data','contrato_data',
-    'docrenov_data','docajuste_data',
-    'caja_data','recibos_llaves'
+    'recibo_data','contrato_data','caja_data',
+    'docrenov_data','docajuste_data','ajprop_data',
+    'cochera_data','fichas_venta_data','fichas_alquiler_data',
+    'recibos_llaves','arreglos_data','valores_historicos',
+    'dg_docs_escritura','liquidacion_data'
   ];
+  const dinamicas = Object.keys(localStorage).filter(k => k.startsWith('alq_props_'));
+  return Array.from(new Set([...fijas, ...dinamicas]));
+}
+
+function exportBackup() {
+  const keys = _getAllAppDataKeys();
   const backup = { version: 3, fecha: new Date().toISOString(), datos: {} };
   keys.forEach(k => {
     const v = localStorage.getItem(k);
@@ -7769,12 +7845,7 @@ function importBackup(input) {
 // cada vez que se guarda un recibo o se modifica datos importantes
 function autoBackupSilent() {
   try {
-    const keys = [
-      'prop_overrides','prop_additions','owner_overrides','owner_additions',
-      'tenant_overrides','tenant_additions','recibo_data','contrato_data',
-      'caja_data','docrenov_data','docajuste_data','docajuste_data',
-      'ajprop_data','cochera_data','fichas_venta_data','fichas_alquiler_data','recibos_llaves'
-    ];
+    const keys = _getAllAppDataKeys();
     const backup = { version: 4, fecha: new Date().toISOString(), datos: {} };
     keys.forEach(k => { const v = localStorage.getItem(k); if(v) try{ backup.datos[k]=JSON.parse(v); }catch(e){} });
     const json = JSON.stringify(backup);
