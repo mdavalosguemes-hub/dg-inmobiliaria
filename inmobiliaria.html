@@ -1057,12 +1057,33 @@
               <button onclick="formatDoc('justifyRight')" style="padding:3px 9px;border:none;border-radius:5px;background:transparent;cursor:pointer;font-size:12px" onmouseover="this.style.background='#e9ecef'" onmouseout="this.style.background='transparent'">➡</button>
               <button onclick="formatDoc('justifyFull')" style="padding:3px 9px;border:none;border-radius:5px;background:transparent;cursor:pointer;font-size:12px" onmouseover="this.style.background='#e9ecef'" onmouseout="this.style.background='transparent'">▤</button>
               <div style="width:1px;background:#ddd;margin:2px 2px"></div>
-              <select onchange="formatDoc('fontSize',this.value);this.value=''" style="padding:3px 6px;border:none;background:transparent;font-size:11px;cursor:pointer;border-radius:5px">
+              <select onchange="formatDoc('fontName',this.value)" title="Tipografía" style="padding:3px 6px;border:none;background:transparent;font-size:11px;cursor:pointer;border-radius:5px;max-width:120px">
+                <option value="Times New Roman">Times New Roman</option>
+                <option value="Arial">Arial</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Verdana">Verdana</option>
+                <option value="Calibri">Calibri</option>
+                <option value="Courier New">Courier New</option>
+                <option value="Garamond">Garamond</option>
+                <option value="Tahoma">Tahoma</option>
+                <option value="Trebuchet MS">Trebuchet MS</option>
+                <option value="Century Gothic">Century Gothic</option>
+              </select>
+              <select onchange="aplicarTamanioFuenteEscritura(this.value);this.value=''" title="Tamaño de letra" style="padding:3px 6px;border:none;background:transparent;font-size:11px;cursor:pointer;border-radius:5px">
                 <option value="">Tam.</option>
-                <option value="2">Chico</option>
-                <option value="3">Normal</option>
-                <option value="4">Medio</option>
-                <option value="5">Grande</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+                <option value="10">10</option>
+                <option value="11">11</option>
+                <option value="12">12</option>
+                <option value="14" selected>14</option>
+                <option value="16">16</option>
+                <option value="18">18</option>
+                <option value="20">20</option>
+                <option value="24">24</option>
+                <option value="28">28</option>
+                <option value="32">32</option>
+                <option value="36">36</option>
               </select>
             </div>
             <button onclick="generarDocumento()"
@@ -9293,6 +9314,21 @@ function initEscrituraPage() {
 function formatDoc(cmd, val) {
   document.getElementById('doc-editor').focus();
   document.execCommand(cmd, false, val || null);
+}
+
+// Aplica un tamaño de letra en puntos exactos (como en Word) a la selección
+// actual del editor. execCommand('fontSize') solo soporta una escala fija
+// de 1 a 7, así que se usa ese valor como marcador temporal y luego se
+// reemplaza por el tamaño real en px sobre el texto seleccionado.
+function aplicarTamanioFuenteEscritura(pt) {
+  if (!pt) return;
+  const editor = document.getElementById('doc-editor');
+  editor.focus();
+  document.execCommand('fontSize', false, '7');
+  editor.querySelectorAll('font[size="7"]').forEach(f => {
+    f.removeAttribute('size');
+    f.style.fontSize = pt + 'pt';
+  });
 }
 
 function insertarSaltoParrafo() {
