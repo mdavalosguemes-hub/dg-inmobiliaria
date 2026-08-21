@@ -1821,7 +1821,7 @@
         <div class="form-group"><label>Fecha de Emisión</label><input type="date" class="form-control" id="r_fecha" onchange="actualizarNumeroRecibo();calcPunitorios()"></div>
         <div class="form-group"><label>Locatario</label><input type="text" class="form-control" id="r_locatario"></div>
         <div class="form-group"><label>Domicilio</label><input type="text" class="form-control" id="r_domicilio"></div>
-        <div class="form-group"><label>Período</label><input type="text" class="form-control" id="r_periodo" placeholder="Ej: Abril 2026"></div>
+        <div class="form-group"><label>Período</label><input type="text" class="form-control" id="r_periodo" placeholder="Ej: Abril 2026" oninput="sincronizarPeriodoConceptos()"></div>
       </div>
       <div class="form-section-title" style="margin-bottom:12px">Conceptos</div>
       <div style="display:grid;grid-template-columns:1fr 130px 150px;gap:6px;margin-bottom:4px">
@@ -2054,6 +2054,18 @@ function parsePeriodoMesAnio(periodoStr) {
 // Punitorios = (alquiler × 0,3%) × días de retraso, redondeado hacia arriba a $100.
 // Si el campo "Punitorios" fue editado a mano (dataset.manual='1'), no se toca:
 // respeta la carga manual y no reescribe recibos ya guardados que no se estén editando.
+// El campo "Período" (arriba de Conceptos) controla automáticamente el
+// período de los conceptos "Alquiler" y "Gastos administrativos", que ya
+// existían como campos propios — no se agrega ningún campo nuevo.
+function sincronizarPeriodoConceptos() {
+  const valor = document.getElementById('r_periodo').value;
+  const alqPeriodoEl = document.querySelector('[data-periodo-concepto="Alquiler"]');
+  const gaPeriodoEl = document.querySelector('[data-periodo-concepto="Gastos administrativos"]');
+  if (alqPeriodoEl) alqPeriodoEl.value = valor;
+  if (gaPeriodoEl) gaPeriodoEl.value = valor;
+  calcPunitorios(); // el período de Alquiler cambió, recalcula si corresponde
+}
+
 function calcPunitorios() {
   const punitoriosEl = document.querySelector('[data-concepto="Punitorios"]');
   if (!punitoriosEl || punitoriosEl.dataset.manual === '1') { calcTotal(); return; }
@@ -5739,6 +5751,7 @@ function renderRecibos() {
     <td style="display:flex;gap:4px">
       <button class="btn btn-secondary btn-sm" onclick='viewRecibo("${r.id}")'>\u{1F441}</button>
       <button class="btn btn-secondary btn-sm" onclick='editRecibo("${r.id}")'>✏️</button>
+      <button class="btn btn-danger btn-sm" onclick='deleteReciboDesdeListado("${r.id}")' title="Eliminar recibo">🗑️</button>
     </td></tr>`).join('');
   renderPag('pag-recibos',ps,filtered.length);
 }
@@ -6856,6 +6869,12 @@ function saveArreglo() {
   showToast('Arreglo guardado \u2713');
 }
 
+function deleteReciboDesdeListado(id) {
+  if (!confirm('¿Seguro que querés eliminar este recibo? Esta acción no se puede deshacer.')) return;
+  setData('recibo_data', getData('recibo_data').filter(x => String(x.id) !== String(id)));
+  renderRecibos();
+  showToast('Recibo eliminado');
+}
 function deleteRec(type) {
   if(!currentId) return;
   if(!confirm('\u00bfSeguro que quer\u00e9s eliminar este registro?')) return;
