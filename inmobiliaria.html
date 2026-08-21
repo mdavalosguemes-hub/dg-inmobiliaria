@@ -244,8 +244,14 @@
   <div class="nav-item" onclick="showPage('contratos')" id="nav-contratos">
     Contratos
   </div>
+  <div class="nav-item" onclick="showPage('sellados')" id="nav-sellados">
+    Sellados
+  </div>
   <div class="nav-item" onclick="showPage('recibos')" id="nav-recibos">
     Recibos
+  </div>
+  <div class="nav-item" onclick="showPage('facturas')" id="nav-facturas">
+    Facturas
   </div>
   <div class="nav-item" onclick="showPage('escritura')" id="nav-escritura">
     Escritura
@@ -564,6 +570,81 @@
     </div>
   </div>
 
+  <!-- ==================== SELLADOS ==================== -->
+  <div id="page-sellados" class="page">
+    <div class="topbar"><h2>Sellados</h2><div class="topbar-actions">
+      <button class="btn btn-secondary" onclick="exportSellados()">📤 Descargar Excel</button>
+      <button class="btn btn-primary" onclick="newSellado()">+ Agregar sellado</button>
+    </div></div>
+    <div class="content">
+      <div class="search-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input type="text" class="search-input" placeholder="Buscar por dirección u orden..." id="search-sellado" oninput="renderSellados()" style="flex:1;min-width:200px">
+        <select class="filter-select" id="filter-sellado-anio" onchange="renderSellados()" style="min-width:90px">
+        </select>
+        <select class="filter-select" id="filter-sellado-quincena" onchange="renderSellados()" style="min-width:110px">
+          <option value="">Todos los períodos</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="limpiarFiltrosSellados()" title="Limpiar filtros" style="white-space:nowrap">✕ Limpiar</button>
+      </div>
+      <div class="table-wrapper">
+        <div class="table-header-bar"><span id="sellado-count-info"></span></div>
+        <div style="overflow-x:auto"><table><thead><tr>
+          <th>Orden Nº</th><th>Quincena Nº</th><th>Dirección del inmueble</th><th>Tipo</th><th>Fecha de sellado</th>
+          <th>Fojas Nº</th><th>Valor total</th><th>Garantías</th><th>Sellado</th><th>Acciones</th>
+        </tr></thead><tbody id="tbody-sellados"></tbody></table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Sellado -->
+  <div class="modal-overlay" id="modal-sellado">
+    <div class="modal" style="max-width:620px">
+      <div class="modal-header"><h3 id="modal-sellado-title">Nuevo Sellado</h3><button class="modal-close" onclick="closeModal('modal-sellado')">✕</button></div>
+      <div class="modal-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group"><label>Orden Nº</label><input type="text" class="form-control" id="s_orden"></div>
+          <div class="form-group"><label>Año de la quincena</label><select class="form-control" id="s_anio_quincena" onchange="poblarQuincenasSellado()"></select></div>
+          <div class="form-group"><label>Quincena Nº</label><select class="form-control" id="s_quincena"></select></div>
+          <div class="form-group" style="position:relative;grid-column:1/-1">
+            <label>Dirección del inmueble</label>
+            <input type="text" class="form-control" id="s_direccion" placeholder="Escribí al menos 3 letras..." oninput="onDireccionSelladoInput()" autocomplete="off">
+            <div id="sellado-direccion-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #ccc;border-radius:6px;max-height:220px;overflow-y:auto;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.15)"></div>
+          </div>
+          <div class="form-group"><label>Tipo de contrato</label>
+            <select class="form-control" id="s_tipo" onchange="calcSellado()">
+              <option value="">Seleccionar</option>
+              <option value="Comercial">Comercial</option>
+              <option value="Vivienda">Vivienda</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Fecha de sellado</label><input type="date" class="form-control" id="s_fecha"></div>
+          <div class="form-group"><label>Fojas Nº</label>
+            <select class="form-control" id="s_fojas" onchange="calcSellado()">
+              <option value="">Seleccionar</option>
+              <option value="21">21</option><option value="24">24</option><option value="27">27</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Valor total ($)</label><input type="number" class="form-control" id="s_valor" oninput="calcSellado()"></div>
+          <div class="form-group"><label>Garantías</label>
+            <select class="form-control" id="s_garantias">
+              <option value="">Seleccionar</option>
+              <option value="Si">Si</option><option value="No">No</option>
+            </select>
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Sellado <span style="font-size:10px;color:#888">(automático)</span></label>
+            <input type="text" class="form-control" id="s_sellado" readonly style="background:var(--surface2)">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" id="btn-del-sellado" onclick="deleteSelladoActual()" style="display:none;margin-right:auto">🗑 Eliminar</button>
+        <button class="btn btn-secondary" onclick="closeModal('modal-sellado')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveSellado()">Guardar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ==================== RECIBOS ==================== -->
   <div id="page-recibos" class="page">
     <div class="topbar"><h2>Recibos No Fiscales</h2><div class="topbar-actions"><button class="btn btn-primary" onclick="newRecibo()">+ Nuevo Recibo</button></div></div>
@@ -611,6 +692,51 @@
           <button class="btn btn-secondary" onclick="exportNumeracion()" style="margin-left:auto">📤 Exportar CSV</button>
         </div>
         <div style="overflow-x:auto;margin-top:12px" id="tabla-numeracion-wrap"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== FACTURAS ==================== -->
+  <div id="page-facturas" class="page">
+    <div class="topbar"><h2>Facturas</h2><div class="topbar-actions"><button class="btn btn-primary" onclick="newFactura()">+ Agregar propiedad</button></div></div>
+    <div class="content">
+      <div class="search-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input type="text" class="search-input" placeholder="Buscar por carpeta, dirección o inquilino..." id="search-factura" oninput="renderFacturas()" style="flex:1;min-width:200px">
+        <select class="filter-select" id="filter-factura-anio" onchange="onFacturaAnioChange()" style="min-width:90px"></select>
+        <select class="filter-select" id="filter-factura-mes" onchange="renderFacturas()" style="min-width:130px"></select>
+      </div>
+      <div class="table-wrapper">
+        <div class="table-header-bar"><span id="factura-count-info"></span></div>
+        <div style="overflow-x:auto"><table><thead id="thead-facturas"></thead><tbody id="tbody-facturas"></tbody></table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Factura (datos fijos de la propiedad) -->
+  <div class="modal-overlay" id="modal-factura">
+    <div class="modal" style="max-width:640px">
+      <div class="modal-header"><h3 id="modal-factura-title">Agregar propiedad</h3><button class="modal-close" onclick="closeModal('modal-factura')">✕</button></div>
+      <div class="modal-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group"><label>Carpeta (C)</label>
+            <select class="form-control" id="fa_carpeta_select" onchange="autoFillFacturaProp()">
+              <option value="">Seleccionar propiedad (opcional)</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Carpeta Nº</label><input type="text" class="form-control" id="fa_carpeta"></div>
+          <div class="form-group" style="grid-column:1/-1"><label>Dirección</label><input type="text" class="form-control" id="fa_direccion"></div>
+          <div class="form-group"><label>Nombre inquilino</label><input type="text" class="form-control" id="fa_nombre_inq"></div>
+          <div class="form-group"><label>Apellido inquilino</label><input type="text" class="form-control" id="fa_apellido_inq"></div>
+          <div class="form-group"><label>CUIT-CUIL (inquilino)</label><input type="text" class="form-control" id="fa_cuit_cuil"></div>
+          <div class="form-group"><label>Condición frente al IVA (inquilino)</label><input type="text" class="form-control" id="fa_iva_inq"></div>
+          <div class="form-group"><label>Propietario</label><input type="text" class="form-control" id="fa_propietario"></div>
+          <div class="form-group"><label>Condición frente al IVA (propietario)</label><input type="text" class="form-control" id="fa_iva_prop"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" id="btn-del-factura" onclick="deleteFacturaActual()" style="display:none;margin-right:auto">🗑 Eliminar</button>
+        <button class="btn btn-secondary" onclick="closeModal('modal-factura')">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveFactura()">Guardar</button>
       </div>
     </div>
   </div>
@@ -2261,6 +2387,25 @@ function cargarValoresHistoricos() {
   renderValoresHistoricosMeses();
 }
 
+// Busca, para un año/mes dado, el último valor efectivamente guardado en o
+// antes de ese período (recorriendo hacia atrás mes a mes, cruzando años si
+// hace falta, desde ANIO_MIN_HISTORICO). No modifica los datos guardados:
+// solo se usa para completar la vista con el valor "vigente".
+function buscarUltimoValorVigente(all, carpeta, anio, mes) {
+  const datosCarpeta = all[carpeta] || {};
+  let y = parseInt(anio, 10), m = parseInt(mes, 10);
+  while (y >= ANIO_MIN_HISTORICO) {
+    const datosAnio = datosCarpeta[String(y)] || {};
+    while (m >= 1) {
+      const v = datosAnio[String(m)];
+      if (v !== undefined && v !== null && v !== '') return v;
+      m--;
+    }
+    y--; m = 12;
+  }
+  return '';
+}
+
 function renderValoresHistoricosMeses() {
   const carpeta = (document.getElementById('p_carpeta').value || '').trim();
   const anio = document.getElementById('vh_anio').value;
@@ -2270,11 +2415,15 @@ function renderValoresHistoricosMeses() {
   if (!grid) return;
   grid.innerHTML = MESES_CORTOS_HIST.map((nombreMes, i) => {
     const mes = i + 1;
-    const val = datosAnio[String(mes)] || '';
+    const valGuardado = datosAnio[String(mes)];
+    const tieneValorPropio = valGuardado !== undefined && valGuardado !== null && valGuardado !== '';
+    const valVigente = tieneValorPropio ? valGuardado : buscarUltimoValorVigente(all, carpeta, anio, mes);
+    const claseHeredado = tieneValorPropio ? '' : ' style="color:var(--text-muted);font-style:italic"';
+    const tituloHeredado = tieneValorPropio ? '' : ' title="Valor vigente heredado del último ajuste registrado (no guardado aún para este mes)"';
     return `<div class="form-group">
       <label>${nombreMes}</label>
-      <input type="number" class="form-control" id="vh_mes_${mes}" value="${val}"
-        onchange="guardarValorHistoricoMes(${mes})" placeholder="-">
+      <input type="number" class="form-control" id="vh_mes_${mes}" value="${valVigente}"
+        onchange="guardarValorHistoricoMes(${mes})" placeholder="-"${claseHeredado}${tituloHeredado}>
     </div>`;
   }).join('');
 }
@@ -2304,7 +2453,9 @@ function showPage(name) {
     inquilinos: renderInquilinos,
     cocheras: renderCocheras,
     recibos: renderRecibos,
+    facturas: renderFacturas,
     contratos: renderContratos,
+    sellados: renderSellados,
     renovaciones: renderRenovaciones,
     'ajustes-prop': function(){ initAjustePropPage(); renderAjusteProp(); },
     ajustes: renderAjustes,
@@ -3227,6 +3378,418 @@ function alqPropagarAFuturo(mesOrigen, anioOrigen, prop) {
 const MESES_NOM = ['','Enero','Febrero','Marzo','Abril','Mayo','Junio',
                    'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
+// ============================================================
+// FACTURAS (Documentos > Facturas)
+// ============================================================
+// Listado inicial migrado del Excel "Facturas" que aportó el usuario.
+// Estructura: cada propiedad tiene sus datos fijos + un objeto "meses"
+// indexado por "AAAA-M" (ej "2026-9") con {monto, factura} para ese período.
+// Así se pueden ir agregando meses/años futuros sin perder lo ya cargado.
+const FACTURAS_SEED = [{"carpeta": "7", "direccion": "Entre Rios 1276 9B", "nombre_inq": "Carla Ines", "apellido_inq": "Lopez", "cuit_cuil": "27311535396", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Entre Rios 1276 9B"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Entre Rios 1276 9B"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Entre Rios 1276 9B"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Entre Rios 1276 9B"}}, "id": "fa_0"}, {"carpeta": "9", "direccion": "Lamadrid 1930 00-02", "nombre_inq": "Sebastian", "apellido_inq": "Espinosa", "cuit_cuil": "20233179419", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre + impuestos- Lamadrid 1930 00-02"}, "2026-10": {"monto": "", "factura": "Honorarios octubre + impuestos- Lamadrid 1930 00-02"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre + impuestos- Lamadrid 1930 00-02"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre + impuestos- Lamadrid 1930 00-02"}}, "id": "fa_1"}, {"carpeta": "11", "direccion": "Maipu 1216  Local 04", "nombre_inq": "Cintia", "apellido_inq": "Compagnone", "cuit_cuil": "27341150979", "iva_inq": "Responsable de monotributo", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Maipu 1216 Local 04"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Maipu 1216 Local 04"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Maipu 1216 Local 04"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Maipu 1216 Local 04"}}, "id": "fa_2"}, {"carpeta": "15", "direccion": "San Martin 1660 3-5", "nombre_inq": "Vanesa", "apellido_inq": "Vangioni", "cuit_cuil": "27303896657", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - San Martin 1660 3-5"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - San Martin 1660 3-5"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - San Martin 1660 3-5"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - San Martin 1660 3-5"}}, "id": "fa_3"}, {"carpeta": "16", "direccion": "Zeballos 2305 01-01", "nombre_inq": "Marianela", "apellido_inq": "Rodriguez", "cuit_cuil": "27383755307 - 20962420231 ", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Zeballos 2305 01-01"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Zeballos 2305 01-01"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Zeballos 2305 01-01"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Zeballos 2305 01-01"}}, "id": "fa_4"}, {"carpeta": "18", "direccion": "Cafferata 594", "nombre_inq": "Nair", "apellido_inq": "Neme", "cuit_cuil": "23359642024", "iva_inq": "Responsable de monotributo", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios  septiembre - Cafferata 954"}, "2026-10": {"monto": "", "factura": "Honorarios  octubre - Cafferata 954"}, "2026-11": {"monto": "", "factura": "Honorarios  noviembre - Cafferata 954"}, "2026-12": {"monto": "", "factura": "Honorarios  diciembre - Cafferata 954"}}, "id": "fa_5"}, {"carpeta": "19", "direccion": "Urquiza 1872 12A", "nombre_inq": "Juan Antonio", "apellido_inq": "Benedict", "cuit_cuil": "20127888788", "iva_inq": "Responsable de monotributo", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Urquiza 1872 12A"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Urquiza 1872 12A"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Urquiza 1872 12A"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Urquiza 1872 12A"}}, "id": "fa_6"}, {"carpeta": "20", "direccion": "9 de Julio 1380", "nombre_inq": "Sabrina", "apellido_inq": "Madelo", "cuit_cuil": "20324444085 - 27347986017", "iva_inq": "Responsable de monotributo", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre  - 9 de Julio 1380"}, "2026-10": {"monto": "", "factura": "Honorarios octubre  - 9 de Julio 1380"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre  - 9 de Julio 1380"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre  - 9 de Julio 1380"}}, "id": "fa_7"}, {"carpeta": "23", "direccion": "Entre Rios 1511 PB", "nombre_inq": "Paula", "apellido_inq": "Campanini", "cuit_cuil": "23321256104", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Entre Rios 1511 PB"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Entre Rios 1511 PB"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Entre Rios 1511 PB"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Entre Rios 1511 PB"}}, "id": "fa_8"}, {"carpeta": "24", "direccion": "San José 3270 (Funes)", "nombre_inq": "Susana", "apellido_inq": "Chiesa", "cuit_cuil": "27034893557", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre  - San Jose 3270 Funes"}, "2026-10": {"monto": "", "factura": "Honorarios octubre  - San Jose 3270 Funes"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre  - San Jose 3270 Funes"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre  - San Jose 3270 Funes"}}, "id": "fa_9"}, {"carpeta": "28", "direccion": "Zeballos 1270 3C", "nombre_inq": "Nicolas", "apellido_inq": "Solis", "cuit_cuil": "20407900317", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Zeballos 1270 3C"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Zeballos 1270 3C"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Zeballos 1270 3C"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Zeballos 1270 3C"}}, "id": "fa_10"}, {"carpeta": "32", "direccion": "Av. Pellegrini 1203 3C", "nombre_inq": "Nicolas", "apellido_inq": "Diaz", "cuit_cuil": "20430087046", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Av. Pellegrini 1203 3C"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Av. Pellegrini 1203 3C"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Av. Pellegrini 1203 3C"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Av. Pellegrini 1203 3C"}}, "id": "fa_11"}, {"carpeta": "33", "direccion": "Garay 5731", "nombre_inq": "Yamila Marina", "apellido_inq": "Colman", "cuit_cuil": "27342681102", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Garay 5731"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Garay 5731"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Garay 5731"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Garay 5731"}}, "id": "fa_12"}, {"carpeta": "36", "direccion": "Corrientes 1298 5A", "nombre_inq": "Mario Alberto", "apellido_inq": "Corrales", "cuit_cuil": "20374035194", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Corrientes 1298 5A"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Corrientes 1298 5A"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Corrientes 1298 5A"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Corrientes 1298 5A"}}, "id": "fa_13"}, {"carpeta": "38", "direccion": "Entre Rios 1524 6B", "nombre_inq": "Gabriela", "apellido_inq": "Meneguzzi", "cuit_cuil": "27400367316", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Entre Rios 1524 6B"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Entre Rios 1524 6B"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Entre Rios 1524 6B"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Entre Rios 1524 6B"}}, "id": "fa_14"}, {"carpeta": "41", "direccion": "Mitre 1747 08-02", "nombre_inq": "Walter", "apellido_inq": "Gravia", "cuit_cuil": "27429342711", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Mitre 1747 8-2"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Mitre 1747 8-2"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Mitre 1747 8-2"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Mitre 1747 8-2"}}, "id": "fa_15"}, {"carpeta": "42", "direccion": "Pellegrini 1203 8A", "nombre_inq": "Agostina", "apellido_inq": "Bur", "cuit_cuil": "27373827512", "iva_inq": "Responsable de monotributo", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Av Pellegrini 1203 8A"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Av Pellegrini 1203 8A"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Av Pellegrini 1203 8A"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Av Pellegrini 1203 8A"}}, "id": "fa_16"}, {"carpeta": "58", "direccion": "Urquiza 1859 1C", "nombre_inq": "Brian", "apellido_inq": "Melgar", "cuit_cuil": "20408106150", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre  - Urquiza 1859 1C"}, "2026-10": {"monto": "", "factura": "Honorarios octubre  - Urquiza 1859 1C"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre  - Urquiza 1859 1C"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre  - Urquiza 1859 1C"}}, "id": "fa_17"}, {"carpeta": "62", "direccion": "Tucuman 3887 2B", "nombre_inq": "Giuliana", "apellido_inq": "Rossi", "cuit_cuil": "23431274744", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Tucuman 3887 2B"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Tucuman 3887 2B"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Tucuman 3887 2B"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Tucuman 3887 2B"}}, "id": "fa_18"}, {"carpeta": "61", "direccion": "Buenos Aires 1668 9", "nombre_inq": "Juan Carlos", "apellido_inq": "Garavelli", "cuit_cuil": "20144202806", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Buenos Aires 1668 9"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Buenos Aires 1668 9"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Buenos Aires 1668 9"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Buenos Aires 1668 9"}}, "id": "fa_19"}, {"carpeta": "65", "direccion": "San Martin 1207", "nombre_inq": "Adrian", "apellido_inq": "Abruzzese", "cuit_cuil": "20264151121", "iva_inq": "", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - San Martin 1207"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - San Martin 1207"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - San Martin 1207"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - San Martin 1207"}}, "id": "fa_20"}, {"carpeta": "66", "direccion": "Bv. Oroño 549 E1-01", "nombre_inq": "Gustavo Marcelo", "apellido_inq": "Morales", "cuit_cuil": "Martin", "iva_inq": "Martin", "propietario": "Martin", "iva_prop": "Martin", "meses": {"2026-9": {"monto": "", "factura": "Martin"}, "2026-10": {"monto": "", "factura": "Martin"}, "2026-11": {"monto": "", "factura": "Martin"}, "2026-12": {"monto": "", "factura": "Martin"}}, "id": "fa_21"}, {"carpeta": "72", "direccion": "Zeballos 771 7B", "nombre_inq": "Patricia", "apellido_inq": "Fernandes", "cuit_cuil": "23957156134", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre  - Zeballos 771 7B"}, "2026-10": {"monto": "", "factura": "Honorarios octubre  - Zeballos 771 7B"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre  - Zeballos 771 7B"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre  - Zeballos 771 7B"}}, "id": "fa_22"}, {"carpeta": "82", "direccion": "Virasoro 1965 1B", "nombre_inq": "Jorge Pablo", "apellido_inq": "Montoya", "cuit_cuil": "20164663206", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Virasoro 1965 1B"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Virasoro 1965 1B"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Virasoro 1965 1B"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Virasoro 1965 1B"}}, "id": "fa_23"}, {"carpeta": "90", "direccion": "Cta. Ricardone 1290 6B", "nombre_inq": "Yonny", "apellido_inq": "Suarez Paz", "cuit_cuil": "27941496925", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Cta. Ricardone 1290 6B"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Cta. Ricardone 1290 6B"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Cta. Ricardone 1290 6B"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Cta. Ricardone 1290 6B"}}, "id": "fa_24"}, {"carpeta": "94", "direccion": "Pellegrini 1203 12A", "nombre_inq": "Sebastian", "apellido_inq": "Balaguer", "cuit_cuil": "20273290401", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Av. Pellegrini 1203 12A"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Av. Pellegrini 1203 12A"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Av. Pellegrini 1203 12A"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Av. Pellegrini 1203 12A"}}, "id": "fa_25"}, {"carpeta": "96", "direccion": "San Luis 607 PB", "nombre_inq": "Hugo (Nidia)", "apellido_inq": "Mamani Ortiz", "cuit_cuil": "27947757356", "iva_inq": "Responsable de monotributo", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - San Luis 607 PB"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - San Luis 607 PB"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - San Luis 607 PB"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - San Luis 607 PB"}}, "id": "fa_26"}, {"carpeta": "117", "direccion": "Corrientes 1616 5B", "nombre_inq": "Cristian", "apellido_inq": "Barco", "cuit_cuil": "20458060682", "iva_inq": "Consumidor Final", "propietario": "23163446049", "iva_prop": "Consumidor Final", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Corrientes 1616 5B"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Corrientes 1616 5B"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Corrientes 1616 5B"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Corrientes 1616 5B"}}, "id": "fa_27"}, {"carpeta": "126", "direccion": "San Martin 1414/6 3D", "nombre_inq": "Malena", "apellido_inq": "Winderbaum", "cuit_cuil": "27431565515", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios alquiler septiembre - San Martin 1416 3D"}, "2026-10": {"monto": "", "factura": "Honorarios alquiler octubre - San Martin 1416 3D"}, "2026-11": {"monto": "", "factura": "Honorarios alquiler noviembre - San Martin 1416 3D"}, "2026-12": {"monto": "", "factura": "Honorarios alquiler diciembre - San Martin 1416 3D"}}, "id": "fa_28"}, {"carpeta": "131", "direccion": "Mendoza 742 00-01", "nombre_inq": "Melina", "apellido_inq": "Negro", "cuit_cuil": "27351146694", "iva_inq": "IVA Responsable Inscripto", "propietario": "20135093034", "iva_prop": "-", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Mendoza 742 00-01"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Mendoza 742 00-01"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Mendoza 742 00-01"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Mendoza 742 00-01"}}, "id": "fa_29"}, {"carpeta": "143", "direccion": "Corrientes 1108 2A", "nombre_inq": "Walter", "apellido_inq": "Aguirre", "cuit_cuil": "20216890664", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Corrientes 1108 2A"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Corrientes 1108 2A"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Corrientes 1108 2A"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Corrientes 1108 2A"}}, "id": "fa_30"}, {"carpeta": "145", "direccion": "San Lorenzo 1067 17-4", "nombre_inq": "Ruben", "apellido_inq": "Suligoy", "cuit_cuil": "33515507219", "iva_inq": "IVA Responsable Inscripto", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios / Impuestos / Servicios septiembre - San Lorenzo 1067 17-4"}, "2026-10": {"monto": "", "factura": "Honorarios / Impuestos / Servicios octubre - San Lorenzo 1067 17-4"}, "2026-11": {"monto": "", "factura": "Honorarios / Impuestos / Servicios noviembre - San Lorenzo 1067 17-4"}, "2026-12": {"monto": "", "factura": "Honorarios / Impuestos / Servicios diciembre - San Lorenzo 1067 17-4"}}, "id": "fa_31"}, {"carpeta": "146", "direccion": "Sarmiento 657 12", "nombre_inq": "Carolina", "apellido_inq": "Leonardi", "cuit_cuil": "27361898031", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Sarmiento 657 12"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Sarmiento 657 12"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Sarmiento 657 12"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Sarmiento 657 12"}}, "id": "fa_32"}, {"carpeta": "150", "direccion": "Tucuman 3887 3B", "nombre_inq": "Maira", "apellido_inq": "Bertran", "cuit_cuil": "27403122772", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios + alquiler septiembre - Tucuman 3887 3B"}, "2026-10": {"monto": "", "factura": "Honorarios + alquiler octubre - Tucuman 3887 3B"}, "2026-11": {"monto": "", "factura": "Honorarios + alquiler noviembre - Tucuman 3887 3B"}, "2026-12": {"monto": "", "factura": "Honorarios + alquiler diciembre - Tucuman 3887 3B"}}, "id": "fa_33"}, {"carpeta": "151", "direccion": "Zeballos 1392 3B", "nombre_inq": "Marianela Ines", "apellido_inq": "Olortiga Valdivia", "cuit_cuil": "23384518354", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Zeballos 1392 3B"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Zeballos 1392 3B"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Zeballos 1392 3B"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Zeballos 1392 3B"}}, "id": "fa_34"}, {"carpeta": "155", "direccion": "Maipu 2329 2C", "nombre_inq": "Florencia", "apellido_inq": "Bollero", "cuit_cuil": "23399503094", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Maipu 2329 2C"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Maipu 2329 2C"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Maipu 2329 2C"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Maipu 2329 2C"}}, "id": "fa_35"}, {"carpeta": "159", "direccion": "Tucuman 2494", "nombre_inq": "María del Rosario", "apellido_inq": "Cordoba", "cuit_cuil": "27254535287", "iva_inq": "Responsable Monotributo", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Tucuman 2494"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Tucuman 2494"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Tucuman 2494"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Tucuman 2494"}}, "id": "fa_36"}, {"carpeta": "167", "direccion": "Italia 2027 3B", "nombre_inq": "Azul", "apellido_inq": "Bullrich", "cuit_cuil": "20179562058", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Italia 2027 3B"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Italia 2027 3B"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Italia 2027 3B"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Italia 2027 3B"}}, "id": "fa_37"}, {"carpeta": "174", "direccion": "Ovidio Lagos 3798", "nombre_inq": "Ana", "apellido_inq": "Murua", "cuit_cuil": "27209232974", "iva_inq": "IVA Responsable Inscripto", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Ov. Lagos 3798"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Ov. Lagos 3798"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Ov. Lagos 3798"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Ov. Lagos 3798"}}, "id": "fa_38"}, {"carpeta": "177", "direccion": "Gaboto 2725", "nombre_inq": "Oscar", "apellido_inq": "Palomini", "cuit_cuil": "23134639679", "iva_inq": "IVA Responsable Inscripto", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre  - Gaboto 2725"}, "2026-10": {"monto": "", "factura": "Honorarios octubre  - Gaboto 2725"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre  - Gaboto 2725"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre  - Gaboto 2725"}}, "id": "fa_39"}, {"carpeta": "179", "direccion": "Pellegrini 2364 9F", "nombre_inq": "Ezequiel", "apellido_inq": "Cabrera", "cuit_cuil": "20330690640", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Av. Pellegrini 2364 9F"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Av. Pellegrini 2364 9F"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Av. Pellegrini 2364 9F"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Av. Pellegrini 2364 9F"}}, "id": "fa_40"}, {"carpeta": "180", "direccion": "Mitre 1666 3B", "nombre_inq": "Alejandra", "apellido_inq": "Medina", "cuit_cuil": "27181937055", "iva_inq": "Consumidor Final", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre - Mitre 1666 3B"}, "2026-10": {"monto": "", "factura": "Honorarios octubre - Mitre 1666 3B"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre - Mitre 1666 3B"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre - Mitre 1666 3B"}}, "id": "fa_41"}, {"carpeta": "190", "direccion": "Los Alamos 1886", "nombre_inq": "Stefania", "apellido_inq": "Apodaca", "cuit_cuil": "27378125761", "iva_inq": "Sujeto no categorizado", "propietario": "", "iva_prop": "", "meses": {"2026-9": {"monto": "", "factura": "Honorarios septiembre -  Los Alamos 1886"}, "2026-10": {"monto": "", "factura": "Honorarios octubre -  Los Alamos 1886"}, "2026-11": {"monto": "", "factura": "Honorarios noviembre -  Los Alamos 1886"}, "2026-12": {"monto": "", "factura": "Honorarios diciembre -  Los Alamos 1886"}}, "id": "fa_42"}];
+
+function getFacturasData() {
+  let raw = localStorage.getItem('facturas_data');
+  if (raw === null) {
+    // Primera vez: sembrar con los datos del Excel
+    localStorage.setItem('facturas_data', JSON.stringify(FACTURAS_SEED));
+    return JSON.parse(JSON.stringify(FACTURAS_SEED));
+  }
+  try { return JSON.parse(raw) || []; } catch { return []; }
+}
+function setFacturasData(arr) {
+  // Mantener siempre ordenado por número de carpeta
+  arr.sort((a,b) => (parseFloat(a.carpeta)||0) - (parseFloat(b.carpeta)||0));
+  localStorage.setItem('facturas_data', JSON.stringify(arr));
+}
+
+function initFacturasFiltros() {
+  const anioSel = document.getElementById('filter-factura-anio');
+  const mesSel = document.getElementById('filter-factura-mes');
+  if (!anioSel || !mesSel) return;
+  const data = getFacturasData();
+  // Años disponibles a partir de los datos + año actual
+  const aniosSet = new Set([new Date().getFullYear()]);
+  data.forEach(f => Object.keys(f.meses||{}).forEach(k => aniosSet.add(parseInt(k.split('-')[0],10))));
+  const anios = [...aniosSet].sort((a,b)=>a-b);
+  const curAnio = anioSel.value || String(new Date().getFullYear());
+  anioSel.innerHTML = anios.map(a=>`<option value="${a}" ${String(a)===curAnio?'selected':''}>${a}</option>`).join('');
+  if (![...anioSel.options].some(o=>o.value===curAnio)) anioSel.value = anios[anios.length-1];
+  poblarMesesFactura();
+}
+function poblarMesesFactura() {
+  const mesSel = document.getElementById('filter-factura-mes');
+  const anio = document.getElementById('filter-factura-anio').value;
+  const data = getFacturasData();
+  const mesesConDatos = new Set();
+  data.forEach(f => Object.keys(f.meses||{}).forEach(k=>{
+    const [y,m] = k.split('-');
+    if (String(y)===String(anio)) mesesConDatos.add(parseInt(m,10));
+  }));
+  // Siempre ofrecer los 12 meses (aunque no tengan datos todavía) para poder cargar facturas nuevas
+  const cur = mesSel.value;
+  mesSel.innerHTML = MESES_NOM.slice(1).map((n,i)=>`<option value="${i+1}">${n}</option>`).join('');
+  if (cur && [...mesSel.options].some(o=>o.value===cur)) mesSel.value = cur;
+  else mesSel.value = String(new Date().getMonth()+1);
+}
+function onFacturaAnioChange() { poblarMesesFactura(); renderFacturas(); }
+
+function renderFacturas() {
+  initFacturasFiltrosSiHaceFalta();
+  const data = getFacturasData();
+  const q = (document.getElementById('search-factura').value||'').toLowerCase();
+  const anio = document.getElementById('filter-factura-anio').value;
+  const mes = document.getElementById('filter-factura-mes').value;
+  const mesKey = anio && mes ? `${anio}-${mes}` : null;
+  const mesNombre = mes ? MESES_NOM[parseInt(mes,10)] : '';
+
+  const filtered = data.filter(f => !q ||
+    (f.carpeta||'').toLowerCase().includes(q) ||
+    (f.direccion||'').toLowerCase().includes(q) ||
+    (f.nombre_inq||'').toLowerCase().includes(q) ||
+    (f.apellido_inq||'').toLowerCase().includes(q)
+  );
+
+  const thead = document.getElementById('thead-facturas');
+  const colsFijas = ['C','Dirección','Nombre inquilino','Apellido inquilino','CUIT-CUIL','Condición frente al IVA','Propietario','Condición frente al IVA'];
+  thead.innerHTML = '<tr>' + colsFijas.map(c=>`<th>${c}</th>`).join('') +
+    (mesKey ? `<th>$ ${mesNombre}</th><th>Factura ${mesNombre}</th>` : '') +
+    '<th>Acciones</th></tr>';
+
+  const tbody = document.getElementById('tbody-facturas');
+  const info = document.getElementById('factura-count-info');
+  if (info) info.textContent = filtered.length + ' de ' + data.length + ' propiedad(es)';
+
+  tbody.innerHTML = filtered.length ? filtered.map(f=>{
+    const m = mesKey ? (f.meses && f.meses[mesKey] || {monto:'',factura:''}) : null;
+    return `<tr>
+      <td><span class="carpeta-badge">${f.carpeta||'-'}</span></td>
+      <td>${f.direccion||'-'}</td>
+      <td>${f.nombre_inq||'-'}</td>
+      <td>${f.apellido_inq||'-'}</td>
+      <td>${f.cuit_cuil||'-'}</td>
+      <td>${f.iva_inq||'-'}</td>
+      <td>${f.propietario||'-'}</td>
+      <td>${f.iva_prop||'-'}</td>
+      ${mesKey ? `
+      <td><input type="number" class="form-control" style="min-width:110px" value="${m.monto||''}" placeholder="0"
+            onchange="guardarFacturaMes('${f.id}','${mesKey}','monto',this.value)"></td>
+      <td><input type="text" class="form-control" style="min-width:220px" value="${(m.factura||'').replace(/"/g,'&quot;')}"
+            onchange="guardarFacturaMes('${f.id}','${mesKey}','factura',this.value)"></td>` : ''}
+      <td><button class="btn btn-secondary btn-sm" onclick="editFactura('${f.id}')">✏️</button></td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:30px">Sin propiedades</td></tr>`;
+}
+function initFacturasFiltrosSiHaceFalta() {
+  const anioSel = document.getElementById('filter-factura-anio');
+  if (anioSel && !anioSel.options.length) initFacturasFiltros();
+}
+
+function guardarFacturaMes(id, mesKey, campo, valor) {
+  const data = getFacturasData();
+  const idx = data.findIndex(f=>String(f.id)===String(id));
+  if (idx<0) return;
+  if (!data[idx].meses) data[idx].meses = {};
+  if (!data[idx].meses[mesKey]) data[idx].meses[mesKey] = {monto:'',factura:''};
+  data[idx].meses[mesKey][campo] = valor;
+  setFacturasData(data);
+  showToast('Guardado ✓');
+}
+
+let facturaCurrentId = null;
+function newFactura() {
+  facturaCurrentId = null;
+  document.getElementById('modal-factura-title').textContent = 'Agregar propiedad';
+  document.getElementById('btn-del-factura').style.display = 'none';
+  ['carpeta','direccion','nombre_inq','apellido_inq','cuit_cuil','iva_inq','propietario','iva_prop'].forEach(k=>{
+    const el = document.getElementById('fa_'+k); if (el) el.value='';
+  });
+  poblarSelectCarpetasFactura();
+  document.getElementById('fa_carpeta_select').value = '';
+  openModal('modal-factura');
+}
+function editFactura(id) {
+  const f = getFacturasData().find(x=>String(x.id)===String(id));
+  if (!f) return;
+  facturaCurrentId = id;
+  document.getElementById('modal-factura-title').textContent = 'Carpeta ' + (f.carpeta||'') + ' · ' + (f.direccion||'');
+  document.getElementById('btn-del-factura').style.display = 'inline-flex';
+  poblarSelectCarpetasFactura();
+  document.getElementById('fa_carpeta_select').value = '';
+  document.getElementById('fa_carpeta').value = f.carpeta||'';
+  document.getElementById('fa_direccion').value = f.direccion||'';
+  document.getElementById('fa_nombre_inq').value = f.nombre_inq||'';
+  document.getElementById('fa_apellido_inq').value = f.apellido_inq||'';
+  document.getElementById('fa_cuit_cuil').value = f.cuit_cuil||'';
+  document.getElementById('fa_iva_inq').value = f.iva_inq||'';
+  document.getElementById('fa_propietario').value = f.propietario||'';
+  document.getElementById('fa_iva_prop').value = f.iva_prop||'';
+  openModal('modal-factura');
+}
+function poblarSelectCarpetasFactura() {
+  const sel = document.getElementById('fa_carpeta_select'); if (!sel) return;
+  const props = getData('prop_data').filter(p=>p.carpeta && p.carpeta!=='-')
+    .sort((a,b)=>(parseFloat(a.carpeta)||0)-(parseFloat(b.carpeta)||0));
+  sel.innerHTML = '<option value="">Seleccionar propiedad (opcional)</option>' +
+    props.map(p=>`<option value="${p.carpeta}">${p.carpeta} — ${p.direccion||''}</option>`).join('');
+}
+function autoFillFacturaProp() {
+  const carpeta = document.getElementById('fa_carpeta_select').value;
+  if (!carpeta) return;
+  const p = getData('prop_data').find(x=>String(x.carpeta)===String(carpeta));
+  if (!p) return;
+  document.getElementById('fa_carpeta').value = p.carpeta||'';
+  document.getElementById('fa_direccion').value = p.direccion||'';
+  document.getElementById('fa_nombre_inq').value = p.nombre_inq||'';
+  document.getElementById('fa_apellido_inq').value = p.apellido_inq||'';
+  const owner = getOwnerName ? getOwnerName(p.carpeta) : '';
+  if (owner) document.getElementById('fa_propietario').value = owner;
+}
+function saveFactura() {
+  const carpeta = document.getElementById('fa_carpeta').value.trim();
+  if (!carpeta) { showToast('Ingresá el número de carpeta','error'); return; }
+  const data = getFacturasData();
+  const doc = {
+    id: facturaCurrentId || ('fa_new_'+Date.now()),
+    carpeta,
+    direccion: document.getElementById('fa_direccion').value,
+    nombre_inq: document.getElementById('fa_nombre_inq').value,
+    apellido_inq: document.getElementById('fa_apellido_inq').value,
+    cuit_cuil: document.getElementById('fa_cuit_cuil').value,
+    iva_inq: document.getElementById('fa_iva_inq').value,
+    propietario: document.getElementById('fa_propietario').value,
+    iva_prop: document.getElementById('fa_iva_prop').value,
+    meses: {}
+  };
+  const idx = data.findIndex(x=>String(x.id)===String(doc.id));
+  if (idx>=0) { doc.meses = data[idx].meses || {}; data[idx] = doc; }
+  else data.push(doc);
+  setFacturasData(data);
+  facturaCurrentId = null;
+  closeModal('modal-factura');
+  renderFacturas();
+  showToast('Propiedad guardada ✓');
+}
+function deleteFacturaActual() {
+  if (!facturaCurrentId) return;
+  if (!confirm('¿Eliminar esta propiedad del listado de Facturas?')) return;
+  const data = getFacturasData().filter(x=>String(x.id)!==String(facturaCurrentId));
+  setFacturasData(data);
+  facturaCurrentId = null;
+  closeModal('modal-factura');
+  renderFacturas();
+  showToast('Propiedad eliminada');
+}
+
+// ============================================================
+// SELLADOS (Documentos > Sellados)
+// ============================================================
+function getSelladosData() { return getData('sellados_data'); }
+function setSelladosData(arr) { setData('sellados_data', arr); }
+
+function generarQuincenas(anio) {
+  const suf = String(anio).slice(-2);
+  const out = [];
+  for (let i=1;i<=24;i++) out.push(`${i}/${suf}`);
+  return out;
+}
+
+function initSelladosFiltros() {
+  const anioSel = document.getElementById('filter-sellado-anio');
+  if (!anioSel || anioSel.options.length) return;
+  const anioActual = new Date().getFullYear();
+  const anios = [];
+  for (let y=anioActual-1; y<=anioActual+1; y++) anios.push(y);
+  anioSel.innerHTML = '<option value="">Todos los años</option>' +
+    anios.map(a=>`<option value="${a}" ${a===anioActual?'selected':''}>${a}</option>`).join('');
+  poblarQuincenasFiltroSellado();
+}
+function poblarQuincenasFiltroSellado() {
+  const anioSel = document.getElementById('filter-sellado-anio');
+  const qSel = document.getElementById('filter-sellado-quincena');
+  if (!anioSel || !qSel) return;
+  const anio = anioSel.value || new Date().getFullYear();
+  qSel.innerHTML = '<option value="">Todos los períodos</option>' +
+    generarQuincenas(anio).map(q=>`<option value="${q}">${q}</option>`).join('');
+}
+document.addEventListener('change', e=>{ if (e.target && e.target.id==='filter-sellado-anio') poblarQuincenasFiltroSellado(); });
+
+function limpiarFiltrosSellados() {
+  document.getElementById('search-sellado').value='';
+  document.getElementById('filter-sellado-anio').value='';
+  poblarQuincenasFiltroSellado();
+  document.getElementById('filter-sellado-quincena').value='';
+  renderSellados();
+}
+
+function renderSellados() {
+  initSelladosFiltros();
+  const data = getSelladosData();
+  const q = (document.getElementById('search-sellado').value||'').toLowerCase();
+  const anio = document.getElementById('filter-sellado-anio').value;
+  const periodo = document.getElementById('filter-sellado-quincena').value;
+  const filtered = data.filter(s=>{
+    const matchQ = !q || (s.direccion||'').toLowerCase().includes(q) || String(s.orden||'').toLowerCase().includes(q);
+    const matchAnio = !anio || (String(s.quincena||'').split('/')[1] === String(anio).slice(-2));
+    const matchPeriodo = !periodo || s.quincena === periodo;
+    return matchQ && matchAnio && matchPeriodo;
+  });
+  const tbody = document.getElementById('tbody-sellados');
+  const info = document.getElementById('sellado-count-info');
+  if (info) info.textContent = filtered.length + ' de ' + data.length + ' sellado(s)';
+  tbody.innerHTML = filtered.length ? filtered.map(s=>`
+    <tr>
+      <td>${s.orden||'-'}</td>
+      <td>${s.quincena||'-'}</td>
+      <td>${s.direccion||'-'}</td>
+      <td>${s.tipo||'-'}</td>
+      <td>${fmtDate(s.fecha)}</td>
+      <td>${s.fojas||'-'}</td>
+      <td>${fmtMoney(s.valor)}</td>
+      <td>${s.garantias||'-'}</td>
+      <td style="max-width:260px;white-space:normal">${s.sellado||'-'}</td>
+      <td><button class="btn btn-secondary btn-sm" onclick="editSellado('${s.id}')">✏️</button></td>
+    </tr>`).join('') : '<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:30px">Sin sellados cargados</td></tr>';
+}
+
+function poblarQuincenasSellado() {
+  const anio = document.getElementById('s_anio_quincena').value;
+  const qSel = document.getElementById('s_quincena');
+  const cur = qSel.value;
+  qSel.innerHTML = generarQuincenas(anio).map(q=>`<option value="${q}">${q}</option>`).join('');
+  if (cur && [...qSel.options].some(o=>o.value===cur)) qSel.value = cur;
+}
+
+function onDireccionSelladoInput() {
+  const q = document.getElementById('s_direccion').value.trim();
+  const box = document.getElementById('sellado-direccion-suggestions');
+  if (q.length < 3) { box.style.display='none'; return; }
+  const props = getData('prop_data').filter(p=>p.direccion && p.direccion!=='-');
+  const matches = props.filter(p=>(p.direccion||'').toLowerCase().startsWith(q.toLowerCase())).slice(0,10);
+  if (!matches.length) { box.style.display='none'; return; }
+  box.innerHTML = matches.map(p=>`
+    <div onclick="selectDireccionSellado('${(p.direccion||'').replace(/'/g,"\\'")}')"
+      style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0"
+      onmouseover="this.style.background='#f0f6ff'" onmouseout="this.style.background=''">
+      ${p.direccion}
+    </div>`).join('');
+  box.style.display='block';
+}
+function selectDireccionSellado(dir) {
+  document.getElementById('s_direccion').value = dir;
+  document.getElementById('sellado-direccion-suggestions').style.display='none';
+}
+document.addEventListener('click', e=>{
+  const box=document.getElementById('sellado-direccion-suggestions');
+  if (box && !box.contains(e.target) && e.target.id!=='s_direccion') box.style.display='none';
+});
+
+function calcSellado() {
+  const tipo = document.getElementById('s_tipo').value;
+  const valor = parseFloat(document.getElementById('s_valor').value)||0;
+  const fojas = parseFloat(document.getElementById('s_fojas').value)||0;
+  const out = document.getElementById('s_sellado');
+  if (tipo === 'Vivienda') {
+    out.value = 'Excento por el inciso 54 art. 236 código fiscal vigente';
+  } else if (tipo === 'Comercial') {
+    const monto = (valor*0.01) + (fojas*26);
+    out.value = '$ ' + monto.toLocaleString('es-AR', {maximumFractionDigits:2});
+  } else {
+    out.value = '';
+  }
+}
+
+let selladoCurrentId = null;
+function newSellado() {
+  selladoCurrentId = null;
+  document.getElementById('modal-sellado-title').textContent = 'Nuevo Sellado';
+  document.getElementById('btn-del-sellado').style.display = 'none';
+  document.getElementById('s_orden').value='';
+  const anioActual = new Date().getFullYear();
+  const anioSel = document.getElementById('s_anio_quincena');
+  anioSel.innerHTML = [anioActual-1,anioActual,anioActual+1].map(a=>`<option value="${a}" ${a===anioActual?'selected':''}>${a}</option>`).join('');
+  poblarQuincenasSellado();
+  document.getElementById('s_direccion').value='';
+  document.getElementById('s_tipo').value='';
+  document.getElementById('s_fecha').value='';
+  document.getElementById('s_fojas').value='';
+  document.getElementById('s_valor').value='';
+  document.getElementById('s_garantias').value='';
+  document.getElementById('s_sellado').value='';
+  openModal('modal-sellado');
+}
+function editSellado(id) {
+  const s = getSelladosData().find(x=>String(x.id)===String(id));
+  if (!s) return;
+  selladoCurrentId = id;
+  document.getElementById('modal-sellado-title').textContent = 'Sellado · '+(s.direccion||'');
+  document.getElementById('btn-del-sellado').style.display = 'inline-flex';
+  document.getElementById('s_orden').value = s.orden||'';
+  const anioQuincena = s.quincena ? '20'+s.quincena.split('/')[1] : new Date().getFullYear();
+  const anioSel = document.getElementById('s_anio_quincena');
+  anioSel.innerHTML = [anioQuincena-1,anioQuincena,anioQuincena+1].map(a=>`<option value="${a}" ${a===Number(anioQuincena)?'selected':''}>${a}</option>`).join('');
+  poblarQuincenasSellado();
+  document.getElementById('s_quincena').value = s.quincena||'';
+  document.getElementById('s_direccion').value = s.direccion||'';
+  document.getElementById('s_tipo').value = s.tipo||'';
+  document.getElementById('s_fecha').value = s.fecha||'';
+  document.getElementById('s_fojas').value = s.fojas||'';
+  document.getElementById('s_valor').value = s.valor||'';
+  document.getElementById('s_garantias').value = s.garantias||'';
+  calcSellado();
+  openModal('modal-sellado');
+}
+function saveSellado() {
+  const direccion = document.getElementById('s_direccion').value.trim();
+  if (!direccion) { showToast('Ingresá la dirección del inmueble','error'); return; }
+  const doc = {
+    id: selladoCurrentId || ('s_'+Date.now()),
+    orden: document.getElementById('s_orden').value,
+    quincena: document.getElementById('s_quincena').value,
+    direccion,
+    tipo: document.getElementById('s_tipo').value,
+    fecha: document.getElementById('s_fecha').value,
+    fojas: document.getElementById('s_fojas').value,
+    valor: document.getElementById('s_valor').value,
+    garantias: document.getElementById('s_garantias').value,
+    sellado: document.getElementById('s_sellado').value
+  };
+  const data = getSelladosData();
+  const idx = data.findIndex(x=>String(x.id)===String(doc.id));
+  if (idx>=0) data[idx]=doc; else data.push(doc);
+  setSelladosData(data);
+  selladoCurrentId = null;
+  closeModal('modal-sellado');
+  renderSellados();
+  showToast('Sellado guardado ✓');
+}
+function deleteSelladoActual() {
+  if (!selladoCurrentId) return;
+  if (!confirm('¿Eliminar este sellado?')) return;
+  setSelladosData(getSelladosData().filter(x=>String(x.id)!==String(selladoCurrentId)));
+  selladoCurrentId = null;
+  closeModal('modal-sellado');
+  renderSellados();
+  showToast('Sellado eliminado');
+}
+function exportSellados() {
+  const data = getSelladosData();
+  if (!data.length) { alert('No hay sellados para exportar'); return; }
+  const rows = data.map(s=>({
+    'Orden Nº': s.orden||'',
+    'Quincena Nº': s.quincena||'',
+    'Dirección del inmueble': s.direccion||'',
+    'Tipo de contrato': s.tipo||'',
+    'Fecha de sellado': excelDate(s.fecha),
+    'Fojas Nº': s.fojas||'',
+    'Valor total $': excelNum(s.valor),
+    'Garantías': s.garantias||'',
+    'Sellado $': s.sellado||''
+  }));
+  descargarXLSX(rows, 'Sellados.xlsx');
+}
+
+
+
 
 
 
@@ -3401,7 +3964,11 @@ function editProp(id) {
     el.value=v;
   }
   document.getElementById('modal-propiedad').querySelectorAll('.modal-tab')[0].click();
-  document.getElementById('p_comision').dataset.manual='1'; document.getElementById('p_gastos').dataset.manual='1'; openModal('modal-propiedad');
+  // No se marcan como "manual": así, si en esta edición se modifica el Valor del alquiler actual,
+  // Comisión actual y Gastos admin actuales se recalculan solos (8% y 3%, redondeado hacia arriba a $100).
+  // Si el usuario edita a mano Comisión o Gastos, el propio oninput de esos campos los marca manual='1'
+  // y dejan de recalcularse automáticamente en esta sesión de edición.
+  document.getElementById('p_comision').dataset.manual='0'; document.getElementById('p_gastos').dataset.manual='0'; openModal('modal-propiedad');
 }
 // ── Control Impuestos ───────────────────────────────────────────────────────
 function renderControlImp() {
@@ -8180,6 +8747,14 @@ function saveAjusteProp() {
     if(idx>=0) data[idx]=doc; else data.push(doc);
   } else data.push(doc);
   setData('ajprop_data', data);
+  // Un ajuste proporcional también fija el valor vigente en Valores históricos
+  // para el mes que corresponda (se usa el año en curso, ya que Ajustes
+  // proporcionales no registra año explícito).
+  const mesNum = MESES_NOM.indexOf(mes);
+  if (mesNum > 0) {
+    const fechaAjusteProp = new Date(new Date().getFullYear(), mesNum - 1, 1);
+    registrarValorHistoricoAutomatico(carpeta, doc.alquiler, fechaAjusteProp);
+  }
   ajpropCurrentId = null;
   renderAjusteProp();
   // Limpiar form
