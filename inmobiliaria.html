@@ -1959,7 +1959,7 @@
         <div class="form-group"><label>Locatario</label><input type="text" class="form-control" id="da_locatario"></div>
         <div class="form-group"><label>Domicilio</label><input type="text" class="form-control" id="da_domicilio"></div>
         <div class="form-group"><label>Monto inicial de contrato ($)</label><input type="text" class="form-control" id="da_monto_inicial" readonly style="background:var(--bg-secondary);color:var(--text-muted);font-weight:600"></div>
-        <div class="form-group"><label>Fecha inicio de contrato</label><input type="date" class="form-control" id="da_fecha_inicio"></div>
+        <div class="form-group"><label>Fecha inicio de contrato</label><input type="date" class="form-control" id="da_fecha_inicio" oninput="recalcDesdeYProxAct()"></div>
         <div class="form-group"><label>Índice</label><select class="form-control" id="da_indice"><option>ICL</option><option>IPC</option><option>CASA PROPIA</option></select></div>
         <div class="form-group"><label>Desde</label><input type="date" class="form-control" id="da_desde"></div>
         <div class="form-group"><label>Próxima actualización</label><input type="date" class="form-control" id="da_hasta" oninput="syncProxActFields()"></div>
@@ -1967,7 +1967,7 @@
         <div class="form-group"><label>% Aumento (Ej: 8.52%)</label><input type="number" step="0.01" min="0" class="form-control" id="da_porcentaje" oninput="calcDocAjuste()"></div>
         <div class="form-group"><label>Nuevo alquiler ($)</label><input type="number" class="form-control" id="da_alq_nuevo" oninput="this.dataset.manualEdit='1';calcDocAjuste()"></div>
         <div class="form-group"><label>Tipo de ajuste</label>
-          <select class="form-control" id="da_tipo_ajuste" onchange="recalcProxAct()">
+          <select class="form-control" id="da_tipo_ajuste" onchange="recalcDesdeYProxAct()">
             <option value="Trimestral">Trimestral</option>
             <option value="Cuatrimestral">Cuatrimestral</option>
             <option value="Semestral" selected>Semestral</option>
@@ -6524,10 +6524,10 @@ function newDocAjuste() {
   document.getElementById('btn-del-docajuste').style.display='none';
   initDocAjusteForm();
   ['carpeta','locatario','domicilio','indice','desde','hasta','alq_actual','porcentaje','alq_nuevo','gastos','mes_aplica','prox_act'].forEach(k=>{const el=document.getElementById('da_'+k);if(el)el.value='';});
-  // "Desde" por defecto: fecha actual de la actualización
+  // "Desde" por defecto: fecha actual (se recalculará según el contrato al elegir la carpeta)
   document.getElementById('da_desde').value=new Date().toISOString().slice(0,10);
   // "Próxima actualización" se calcula automáticamente según el tipo de ajuste seleccionado por defecto
-  recalcProxAct();
+  recalcDesdeYProxAct();
   calcDocAjuste();
   openModal('modal-doc-ajuste');
 }
@@ -6570,10 +6570,9 @@ function autoFillDocAjuste() {
     }
   }
   if(t) document.getElementById('da_locatario').value=(t.nombre||'')+' '+(t.apellido||'');
-  // "Desde" por defecto: fecha actual de la actualización
-  document.getElementById('da_desde').value=new Date().toISOString().slice(0,10);
-  // "Próxima actualización" se calcula automáticamente desde "Desde" + tipo de ajuste
-  recalcProxAct();
+  // "Desde" y "Próxima actualización" se calculan automáticamente a partir de
+  // la Fecha inicio de contrato y el Tipo de ajuste (ciclos ya transcurridos).
+  recalcDesdeYProxAct();
   // Auto-calcular gastos si hay alquiler
   const gastosEl2 = document.getElementById('da_gastos');
   if (gastosEl2) { gastosEl2.dataset.manualEdit = '0'; }
@@ -6595,6 +6594,51 @@ function calcProxActDesdeAjuste(fechaBase, tipoAjuste) {
   else if(aj.includes('anual')||aj.includes('año')) dt.setFullYear(dt.getFullYear()+1);
   else return '';
   return dt.toISOString().slice(0,10);
+}
+function mesesPorTipoAjuste(tipoAjuste) {
+  if(!tipoAjuste) return 0;
+  const aj = tipoAjuste.toLowerCase();
+  if(aj.includes('cuat'))      return 4; // PRIMERO cuatrimestral (contiene "trim")
+  if(aj.includes('trim'))      return 3;
+  if(aj.includes('sem'))       return 6;
+  if(aj.includes('anual')||aj.includes('año')) return 12;
+  return 0;
+}
+
+// Dada la fecha de inicio del contrato y el tipo de ajuste, calcula cuántos
+// ciclos completos ya transcurrieron desde esa fecha hasta hoy, y devuelve:
+// - desde: el vencimiento de actualización vigente (el próximo a partir de hoy)
+// - proxima: el vencimiento siguiente a ese
+// Ej: inicio 01/06/2026, trimestral, hoy 24/08/2026 -> desde 01/09/2026, proxima 01/12/2026
+function calcularDesdeYProxActDesdeContrato(fechaInicioStr, tipoAjuste) {
+  const meses = mesesPorTipoAjuste(tipoAjuste);
+  if(!fechaInicioStr || !meses) return null;
+  let fi = fechaInicioStr.trim();
+  if(fi.includes('/')) { const p=fi.split('/'); if(p.length===3){ fi=`${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`; } }
+  fi = fi.slice(0,10);
+  const cursor = new Date(fi+'T00:00:00');
+  if(isNaN(cursor)) return null;
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  while(cursor < hoy) { cursor.setMonth(cursor.getMonth()+meses); }
+  const desde = cursor.toISOString().slice(0,10);
+  const proxima = new Date(cursor); proxima.setMonth(proxima.getMonth()+meses);
+  return { desde, proxima: proxima.toISOString().slice(0,10) };
+}
+
+// Recalcula Desde y Próxima actualización usando Fecha inicio de contrato +
+// Tipo de ajuste. Si todavía no hay fecha de inicio cargada, usa como
+// respaldo el cálculo anterior (desde "Desde" manual + tipo de ajuste).
+function recalcDesdeYProxAct() {
+  const fechaInicio = document.getElementById('da_fecha_inicio').value;
+  const tipo = document.getElementById('da_tipo_ajuste').value;
+  const resultado = calcularDesdeYProxActDesdeContrato(fechaInicio, tipo);
+  if(resultado) {
+    document.getElementById('da_desde').value    = resultado.desde;
+    document.getElementById('da_hasta').value    = resultado.proxima;
+    document.getElementById('da_prox_act').value = resultado.proxima;
+  } else {
+    recalcProxAct();
+  }
 }
 function recalcProxAct() {
   // Al cambiar tipo de ajuste, recalcular da_hasta y da_prox_act desde da_desde
