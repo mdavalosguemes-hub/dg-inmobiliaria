@@ -4253,10 +4253,18 @@ function saveProp() {
     const calc = calcProxActAutomatica(updated.ajuste, updated.fecha_inicio);
     if(calc) updated.prox_act = calc;
   }
+  // Alquiler previo (antes de esta edición), para saber si realmente cambió
+  const alquilerAnterior = currentId ? (data.find(x=>String(x.id)===String(currentId))||{}).alquiler : undefined;
   if(currentId) { const idx=data.findIndex(x=>String(x.id)===String(currentId)); if(idx>=0) data[idx]={...data[idx],...updated}; }
   else { updated.id=Date.now(); data.push(updated); }
   setData('prop_data',data);
-  registrarValorHistoricoAutomatico(updated.carpeta, updated.alquiler, new Date());
+  // Solo se registra el valor histórico del mes actual si el alquiler
+  // efectivamente cambió en esta edición. Así no se pisa una corrección
+  // manual hecha en "Valores históricos" al guardar otros campos de la
+  // propiedad sin tocar el alquiler.
+  if (String(alquilerAnterior||'') !== String(updated.alquiler||'')) {
+    registrarValorHistoricoAutomatico(updated.carpeta, updated.alquiler, new Date());
+  }
   const carpeta = updated.carpeta;
   const nombre  = updated.nombre_inq || '';
   const apellido= updated.apellido_inq || '';
