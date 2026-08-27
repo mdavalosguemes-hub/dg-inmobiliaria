@@ -955,7 +955,10 @@
           <h3 style="margin:0 0 16px;color:var(--primary)">📤 Exportar a Excel</h3>
           <p style="color:var(--text-muted);font-size:13px;margin-bottom:20px">Descargá los datos en planillas Excel.</p>
           <div style="display:flex;flex-direction:column;gap:10px">
-            <button class="btn btn-secondary" onclick="exportExcel('propiedades')">🏠 Propiedades</button>
+            <div style="display:flex;gap:8px;align-items:center">
+              <button class="btn btn-secondary" style="flex:1" onclick="exportExcel('propiedades')">🏠 Propiedades</button>
+              <select class="filter-select" id="export-prop-anio" title="Año de Valores Históricos a incluir" style="min-width:90px"></select>
+            </div>
             <button class="btn btn-secondary" onclick="exportExcel('propietarios')">👤 Propietarios</button>
             <button class="btn btn-secondary" onclick="exportExcel('inquilinos')">🔑 Inquilinos</button>
             <button class="btn btn-secondary" onclick="exportExcel('recibos')">📄 Recibos (todos)</button>
@@ -2544,7 +2547,7 @@ function showPage(name) {
     'ajustes-prop': function(){ initAjustePropPage(); renderAjusteProp(); },
     ajustes: renderAjustes,
     caja: renderCaja,
-    importexport: () => { initAutoBackupPanel(); },
+    importexport: () => { initAutoBackupPanel(); initExportPropAnioSelect(); },
     escritura: () => { initEscrituraPage(); },
     'fichas-venta': () => { renderFichasVenta(); },
     'fichas-alquiler': () => { initFichaAlquilerPage(); renderFichasAlquiler(); },
@@ -8301,29 +8304,53 @@ function excelNum(v) {
   return isNaN(n) ? '' : n;
 }
 
+// Puebla el selector de año que controla qué Valores Históricos se anexan
+// al exportar "Propiedades" a Excel.
+function initExportPropAnioSelect() {
+  const sel = document.getElementById('export-prop-anio');
+  if (!sel || sel.options.length) return; // ya poblado
+  const anioActual = new Date().getFullYear();
+  const anios = [];
+  for (let y = ANIO_MIN_HISTORICO; y <= anioActual + 1; y++) anios.push(y);
+  sel.innerHTML = anios.map(y => `<option value="${y}" ${y===anioActual?'selected':''}>${y}</option>`).join('');
+}
+
 function exportExcel(tipo) {
   let rows=[], filename='';
   if(tipo==='propiedades'){
     const data=getData('prop_data').filter(p=>p.carpeta&&p.carpeta!=='-');
-    // Mismas columnas, mismo orden, que la tabla de la pestaña "Propiedades"
-    rows=data.map(p=>({
-      'Carpeta': p.carpeta||'',
-      'Dirección': p.direccion||'',
-      'Tipo': p.tipo||'',
-      'Inquilino': p.nombre_inq ? `${p.nombre_inq} ${p.apellido_inq||''}`.trim() : '',
-      'Estado': p.estado||'',
-      'Alquiler actual': excelNum(p.alquiler),
-      'Comisión': excelNum(p.comision),
-      'Gs. Admin.': excelNum(p.gastos),
-      'F. Inicio': excelDate(p.fecha_inicio),
-      'Monto Inicial': excelNum(p.monto_inicial),
-      'Ajuste': p.ajuste||'',
-      'Próx. ajuste': excelDate(p.prox_act),
-      'Fin contrato': excelDate(p.fecha_fin),
-      'Propietario': getOwnerName(p.carpeta)||'',
-      'Observaciones': p.observaciones||''
-    }));
-    filename='Propiedades.xlsx';
+    const valoresHist = getValoresHistoricos();
+    const anioSel = document.getElementById('export-prop-anio');
+    const anioVH = anioSel && anioSel.value ? anioSel.value : String(new Date().getFullYear());
+    // Mismas columnas, mismo orden, que la tabla de la pestaña "Propiedades".
+    // Se agregan al FINAL las 12 columnas de Valores Históricos del año
+    // elegido en el selector, sin tocar ninguna columna existente.
+    rows=data.map(p=>{
+      const fila={
+        'Carpeta': p.carpeta||'',
+        'Dirección': p.direccion||'',
+        'Tipo': p.tipo||'',
+        'Inquilino': p.nombre_inq ? `${p.nombre_inq} ${p.apellido_inq||''}`.trim() : '',
+        'Estado': p.estado||'',
+        'Alquiler actual': excelNum(p.alquiler),
+        'Comisión': excelNum(p.comision),
+        'Gs. Admin.': excelNum(p.gastos),
+        'F. Inicio': excelDate(p.fecha_inicio),
+        'Monto Inicial': excelNum(p.monto_inicial),
+        'Ajuste': p.ajuste||'',
+        'Próx. ajuste': excelDate(p.prox_act),
+        'Fin contrato': excelDate(p.fecha_fin),
+        'Propietario': getOwnerName(p.carpeta)||'',
+        'Observaciones': p.observaciones||''
+      };
+      const datosAnio = (valoresHist[p.carpeta] && valoresHist[p.carpeta][anioVH]) || {};
+      MESES_CORTOS_HIST.forEach((nombreMes, i) => {
+        const v = datosAnio[String(i+1)];
+        fila[`VH ${nombreMes} ${anioVH}`] = (v!==undefined && v!==null && v!=='') ? excelNum(v) : '';
+      });
+      return fila;
+    });
+    filename=`Propiedades.xlsx`;
   } else if(tipo==='propietarios'){
     const data=getData('owner_data');
     rows=data.map(o=>({
