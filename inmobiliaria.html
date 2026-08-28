@@ -2727,6 +2727,34 @@ function alqRemoveItem(btn, idx, mes, anio) {
   }
 }
 
+// Al generar un mes nuevo en Alquileres Mensuales (copiado del mes anterior),
+// actualiza automáticamente el ítem "Monto alquiler" y "Monto Gastos
+// administrativos" de cada propiedad (no cocheras) según lo que corresponda
+// en "Valores Históricos" para esa propiedad y ese mes/año. Usa el mismo
+// criterio de "último valor vigente" que ya usa la pestaña Valores
+// Históricos (si no hay un valor específico para el mes, toma el último
+// disponible hacia atrás, sin dejarlo vacío). Los Gastos administrativos se
+// calculan con la misma fórmula que ya usa el sistema (3% redondeado hacia
+// arriba a $100). No se tocan cocheras ni ítems que el usuario haya
+// renombrado, y no se pierde ni se agrega ningún ítem extra que ya existiera.
+function alqActualizarItemsDesdeValoresHistoricos(props, mes, anio) {
+  const valoresHist = getValoresHistoricos();
+  return props.map(p => {
+    if (p.tipo !== 'propiedad' || !Array.isArray(p.items) || !p.items.length) return p;
+    const valorVigente = buscarUltimoValorVigente(valoresHist, String(p.carpeta), String(anio), String(mes));
+    if (valorVigente === '' || valorVigente === undefined || valorVigente === null) return p; // sin historial: no tocar
+    const alquiler = parseFloat(valorVigente) || 0;
+    const gastos = Math.ceil((alquiler * 0.03) / 100) * 100;
+    const items = p.items.map((it, idx) => {
+      const desc = (it.desc || '').toLowerCase();
+      if (idx === 0 && desc.includes('alquiler')) return { ...it, val: alquiler };
+      if (idx === 1 && desc.includes('gastos')) return { ...it, val: gastos };
+      return it;
+    });
+    return { ...p, items };
+  });
+}
+
 function alqGetStoredProps(mes, anio) {
   const key = `alq_props_${anio}_${mes}`;
   const stored = localStorage.getItem(key);
@@ -2744,13 +2772,16 @@ function alqGetStoredProps(mes, anio) {
     if (prevStored) {
       // Copiar y limpiar campos que deben reiniciarse para el nuevo mes
       const prev = JSON.parse(prevStored);
-      const copia = prev.map(p => ({
+      let copia = prev.map(p => ({
         ...p,
         // Mantener: carpeta, direccion, tipo, items (montos), datos bancarios
         // Limpiar: transferencias ya realizadas del mes anterior
         trans_prop: null,
         trans_inm:  null
       }));
+      // Actualizar Alquiler y Gastos administrativos según Valores Históricos
+      // del mes/año que se está generando (no el mes copiado)
+      copia = alqActualizarItemsDesdeValoresHistoricos(copia, mes, anio);
       localStorage.setItem(key, JSON.stringify(copia));
       setData(key, copia);
       return copia;
@@ -2758,7 +2789,7 @@ function alqGetStoredProps(mes, anio) {
   }
 
   // Si no hay ningún mes previo, usar la base original
-  const base = JSON.parse(JSON.stringify(ALQ_BASE_DATA));
+  const base = alqActualizarItemsDesdeValoresHistoricos(JSON.parse(JSON.stringify(ALQ_BASE_DATA)), mes, anio);
   localStorage.setItem(key, JSON.stringify(base));
   setData(key, base);
   return base;
