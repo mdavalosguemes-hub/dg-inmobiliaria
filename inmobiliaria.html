@@ -446,6 +446,7 @@
             <input type="text" class="filter-select" id="alq-filtro-carp" placeholder="Ej: 72 (vacío = todas)" oninput="renderAlquileresMensuales()" style="width:160px">
           </div>
           <button class="btn btn-secondary btn-sm" onclick="alqAbrirModalAgregar()">+ Agregar propiedad</button>
+          <button class="btn btn-secondary btn-sm" onclick="alqRecalcularMesActualDesdeHistoricos()" title="Vuelve a tomar Alquiler y Gastos administrativos de Valores Históricos para el mes/año seleccionado">🔄 Actualizar según Valores Históricos</button>
           <button class="btn btn-primary btn-sm" onclick="exportAllAlqPDF()">🖨 Exportar todos en PDF</button>
         </div>
         <!-- Grilla de propiedades del mes -->
@@ -2753,6 +2754,21 @@ function alqActualizarItemsDesdeValoresHistoricos(props, mes, anio) {
     });
     return { ...p, items };
   });
+}
+
+// Botón "🔄 Actualizar según Valores Históricos": vuelve a tomar Alquiler y
+// Gastos administrativos de Valores Históricos para el mes/año actualmente
+// seleccionado. Sirve tanto para corregir meses que ya se habían generado
+// ANTES de que existiera el cálculo automático, como para refrescar un mes
+// después de cargar un ajuste nuevo. No toca ítems extra ni cocheras.
+function alqRecalcularMesActualDesdeHistoricos() {
+  const mes  = parseInt(document.getElementById('alq-mes')?.value  || (new Date().getMonth()+1));
+  const anio = parseInt(document.getElementById('alq-anio')?.value || new Date().getFullYear());
+  const props = alqGetStoredProps(mes, anio);
+  const actualizados = alqActualizarItemsDesdeValoresHistoricos(props, mes, anio);
+  alqSaveProps(mes, anio, actualizados);
+  renderAlquileresMensuales();
+  showToast('Valores actualizados según Valores Históricos ✓');
 }
 
 function alqGetStoredProps(mes, anio) {
