@@ -2449,6 +2449,34 @@ function setValorHistorico(carpeta, anio, mes, valor) {
   setData('valores_historicos', all);
 }
 
+// ------------------------------------------------------------
+// Carga de prueba: 3 propiedades (carpetas 1, 2 y 3) con sus Valores
+// Históricos 2026 provistas por el usuario desde Excel. Se ejecuta una sola
+// vez (flag en localStorage) y es idempotente: solo completa meses que
+// TODAVÍA NO tienen un valor cargado; nunca pisa un valor ya existente.
+// ------------------------------------------------------------
+const VALORES_HISTORICOS_SEED_EXCEL = {"1":{"direccion":"Mitre 1568 5D","anio":"2026","meses":{"1":"332400","2":"332400","3":"332400","4":"332400","5":"332400","6":"420000","7":"420000","8":"420000","9":"451000","10":"451000","11":"451000","12":"451000"}},"2":{"direccion":"Pte. Roca 4849","anio":"2026","meses":{"1":"512000","2":"541000","3":"541000","4":"541000","5":"559000","6":"597000","7":"597000","8":"597000","9":"614500","10":"664000","11":"664000","12":"664000"}},"3":{"direccion":"San Juan 2040","anio":"2026","meses":{"1":"649000","2":"649000","3":"667000","4":"703000","5":"703000","6":"703000","7":"748000","8":"790000","9":"790000","10":"790000"}}};
+
+function migrarValoresHistoricosSeedExcel() {
+  const FLAG = 'valores_historicos_seed_excel_v1_done';
+  if (localStorage.getItem(FLAG) === '1') return;
+  const all = getValoresHistoricos();
+  let completados = 0;
+  Object.entries(VALORES_HISTORICOS_SEED_EXCEL).forEach(([carpeta, info]) => {
+    if (!all[carpeta]) all[carpeta] = {};
+    if (!all[carpeta][info.anio]) all[carpeta][info.anio] = {};
+    Object.entries(info.meses).forEach(([mes, valor]) => {
+      const actual = all[carpeta][info.anio][mes];
+      if (actual === undefined || actual === null || actual === '') {
+        all[carpeta][info.anio][mes] = valor;
+        completados++;
+      }
+    });
+  });
+  if (completados > 0) setData('valores_historicos', all);
+  localStorage.setItem(FLAG, '1');
+}
+
 // Se llama automáticamente cada vez que se actualiza el alquiler de una
 // propiedad (guardado directo, ajuste o renovación), para ir dejando
 // registro mes a mes. El usuario igual puede editar cualquier valor a mano
@@ -7175,11 +7203,13 @@ document.addEventListener('DOMContentLoaded', () => {
   showAuthOverlay();
   initServidorLocal();
   migrarSelladosSeedInicial();
+  migrarValoresHistoricosSeedExcel();
 });
 if(document.readyState !== 'loading') {
   showAuthOverlay();
   initServidorLocal();
   migrarSelladosSeedInicial();
+  migrarValoresHistoricosSeedExcel();
 }
 
 
