@@ -2830,6 +2830,54 @@ function alqRemoveItem(btn, idx, mes, anio) {
 // calculan con la misma fórmula que ya usa el sistema (3% redondeado hacia
 // arriba a $100). No se tocan cocheras ni ítems que el usuario haya
 // renombrado, y no se pierde ni se agrega ningún ítem extra que ya existiera.
+// Conceptos cuyo período corresponde al MES ANTERIOR al que se está
+// liquidando (regla especial pedida por el usuario). Cualquier otro
+// concepto con período (TGI, Aguas, etc., o lo que se haya agregado a
+// mano) usa el mes que se está liquidando.
+const ALQ_CONCEPTOS_MES_ANTERIOR = ['expensas extraordinarias', 'expensa extraordinaria', 'expensas', 'expensa'];
+
+function alqEsConceptoMesAnterior(desc) {
+  const base = (desc || '').toLowerCase();
+  return ALQ_CONCEPTOS_MES_ANTERIOR.some(k => base.includes(k));
+}
+
+function alqPeriodoTexto(mes, anio) {
+  const mm = String(mes).padStart(2, '0');
+  const aa = String(anio).slice(-2);
+  return `${mm}/${aa}`;
+}
+
+// Busca un período "MM/AA" o "MM/AAAA" dentro del texto de un ítem (ej.
+// "TGI 09/26", "Expensas 08/26") y lo reemplaza por el período que
+// corresponde al nuevo mes que se está generando, según el tipo de
+// concepto (mismo mes, o mes anterior para Expensas/Expensas
+// extraordinarias). Si el ítem no tiene ningún período en el texto (ej.
+// "Monto alquiler"), lo deja exactamente igual.
+function alqActualizarPeriodoDesc(desc, mesNuevo, anioNuevo) {
+  if (!desc) return desc;
+  const re = /(\d{1,2})\s*\/\s*(\d{2,4})/;
+  if (!re.test(desc)) return desc;
+  let mesObjetivo = mesNuevo, anioObjetivo = anioNuevo;
+  if (alqEsConceptoMesAnterior(desc)) {
+    mesObjetivo = mesNuevo - 1;
+    if (mesObjetivo < 1) { mesObjetivo = 12; anioObjetivo = anioNuevo - 1; }
+  }
+  return desc.replace(re, alqPeriodoTexto(mesObjetivo, anioObjetivo));
+}
+
+// Aplica la actualización de período a TODOS los ítems de TODAS las
+// propiedades/cocheras del mensual que se está generando (no solo
+// "Monto alquiler"/"Monto Gastos administrativos", que ya se resuelven
+// aparte). No se pierde ni se agrega ningún ítem: se mantiene la misma
+// lista y orden, solo se actualiza el texto del período cuando corresponde.
+function alqActualizarPeriodosItems(props, mesNuevo, anioNuevo) {
+  return props.map(p => {
+    if (!Array.isArray(p.items) || !p.items.length) return p;
+    const items = p.items.map(it => ({ ...it, desc: alqActualizarPeriodoDesc(it.desc, mesNuevo, anioNuevo) }));
+    return { ...p, items };
+  });
+}
+
 function alqActualizarItemsDesdeValoresHistoricos(props, mes, anio) {
   const valoresHist = getValoresHistoricos();
   return props.map(p => {
@@ -2857,7 +2905,8 @@ function alqRecalcularMesActualDesdeHistoricos() {
   const mes  = parseInt(document.getElementById('alq-mes')?.value  || (new Date().getMonth()+1));
   const anio = parseInt(document.getElementById('alq-anio')?.value || new Date().getFullYear());
   const props = alqGetStoredProps(mes, anio);
-  const actualizados = alqActualizarItemsDesdeValoresHistoricos(props, mes, anio);
+  let actualizados = alqActualizarItemsDesdeValoresHistoricos(props, mes, anio);
+  actualizados = alqActualizarPeriodosItems(actualizados, mes, anio);
   alqSaveProps(mes, anio, actualizados);
   renderAlquileresMensuales();
   showToast('Valores actualizados según Valores Históricos ✓');
@@ -2890,6 +2939,9 @@ function alqGetStoredProps(mes, anio) {
       // Actualizar Alquiler y Gastos administrativos según Valores Históricos
       // del mes/año que se está generando (no el mes copiado)
       copia = alqActualizarItemsDesdeValoresHistoricos(copia, mes, anio);
+      // Actualizar automáticamente los períodos de TGI, Aguas, Expensas, etc.
+      // según el tipo de concepto (mismo mes o mes anterior)
+      copia = alqActualizarPeriodosItems(copia, parseInt(mes), parseInt(anio));
       localStorage.setItem(key, JSON.stringify(copia));
       setData(key, copia);
       return copia;
