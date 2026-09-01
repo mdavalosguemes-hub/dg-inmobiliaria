@@ -912,7 +912,15 @@
         <div class="stats-grid" id="stats-caja"></div>
         <div class="search-bar" style="margin-top:12px">
           <input type="text" class="search-input" placeholder="Buscar por concepto, carpeta..." id="search-caja" oninput="renderCaja()">
-          <input type="date" class="filter-select" id="filter-caja-fecha" onchange="renderCaja()" style="max-width:160px">
+          <select class="filter-select" id="filter-caja-mes" onchange="renderCaja()" style="max-width:140px">
+            <option value="">Todos los meses</option>
+            <option value="1">Enero</option><option value="2">Febrero</option><option value="3">Marzo</option>
+            <option value="4">Abril</option><option value="5">Mayo</option><option value="6">Junio</option>
+            <option value="7">Julio</option><option value="8">Agosto</option><option value="9">Septiembre</option>
+            <option value="10">Octubre</option><option value="11">Noviembre</option><option value="12">Diciembre</option>
+          </select>
+          <select class="filter-select" id="filter-caja-anio" onchange="renderCaja()" style="max-width:110px"></select>
+          <input type="date" class="filter-select" id="filter-caja-fecha" onchange="renderCaja()" style="max-width:160px" title="Filtrar por un día exacto (opcional)">
           <select class="filter-select" id="filter-caja-tipo" onchange="renderCaja()">
             <option value="">Todos</option>
             <option value="ingreso">Ingresos</option>
@@ -923,6 +931,7 @@
             <option value="Efectivo">Solo Efectivo</option>
             <option value="Transferencia">Solo Transferencia</option>
           </select>
+          <button class="btn btn-secondary btn-sm" onclick="limpiarFiltrosCaja()">✕ Limpiar</button>
         </div>
         <div class="table-wrapper">
           <div class="table-header-bar"><span id="caja-count-info"></span></div>
@@ -8169,15 +8178,44 @@ self.addEventListener('fetch', e => {
 // ============================================================
 let currentMovId = null;
 
+function initFiltroCajaAnio() {
+  const sel = document.getElementById('filter-caja-anio');
+  if (!sel) return;
+  const data = getData('caja_data') || [];
+  const anioActual = new Date().getFullYear();
+  const anios = new Set([anioActual]);
+  data.forEach(m => { if (m.fecha) anios.add(parseInt(m.fecha.slice(0,4), 10)); });
+  const valorActual = sel.value;
+  sel.innerHTML = '<option value="">Todos los a\u00f1os</option>' +
+    [...anios].sort((a,b)=>b-a).map(a => `<option value="${a}">${a}</option>`).join('');
+  if (valorActual && [...sel.options].some(o => o.value === valorActual)) sel.value = valorActual;
+}
+
+function limpiarFiltrosCaja() {
+  document.getElementById('search-caja').value = '';
+  document.getElementById('filter-caja-mes').value = '';
+  document.getElementById('filter-caja-anio').value = '';
+  document.getElementById('filter-caja-fecha').value = '';
+  document.getElementById('filter-caja-tipo').value = '';
+  document.getElementById('filter-caja-medio').value = '';
+  renderCaja();
+}
+
 function renderCaja() {
+  initFiltroCajaAnio();
   const data = getData('caja_data') || [];
   const q = (document.getElementById('search-caja').value||'').toLowerCase();
   const fecha = document.getElementById('filter-caja-fecha').value;
+  const mesFiltro = document.getElementById('filter-caja-mes')?.value || '';
+  const anioFiltro = document.getElementById('filter-caja-anio')?.value || '';
   const tipo = document.getElementById('filter-caja-tipo').value;
   const medio = document.getElementById('filter-caja-medio')?.value || '';
   let filtered = data.filter(m => {
     if(q && ![m.concepto,m.carpeta,m.obs].join(' ').toLowerCase().includes(q)) return false;
     if(fecha && m.fecha !== fecha) return false;
+    if(!m.fecha && (mesFiltro || anioFiltro)) return false;
+    if(mesFiltro && m.fecha && parseInt(m.fecha.slice(5,7),10) !== parseInt(mesFiltro,10)) return false;
+    if(anioFiltro && m.fecha && m.fecha.slice(0,4) !== String(anioFiltro)) return false;
     if(tipo && m.tipo !== tipo) return false;
     if(medio && (m.medio||'Efectivo') !== medio) return false;
     return true;
@@ -8189,12 +8227,16 @@ function renderCaja() {
   const saldo = totalIng - totalEgr;
   const saldoEfectivo = filtered.filter(m=>(m.medio||'Efectivo')==='Efectivo').reduce((s,m)=>s+((m.tipo==='ingreso'?1:-1)*(parseFloat(m.monto)||0)),0);
   const saldoTransferencia = filtered.filter(m=>(m.medio||'Efectivo')==='Transferencia').reduce((s,m)=>s+((m.tipo==='ingreso'?1:-1)*(parseFloat(m.monto)||0)),0);
+  // Saldo general: SIEMPRE todos los movimientos, sin importar el filtro de mes/año activo
+  const saldoGeneral = data.reduce((s,m)=>s+((m.tipo==='ingreso'?1:-1)*(parseFloat(m.monto)||0)),0);
+  const hayFiltroMes = !!(mesFiltro || anioFiltro || fecha);
   document.getElementById('stats-caja').innerHTML=`
-    <div class="stat-card"><div class="stat-value" style="color:#27ae60">$${totalIng.toLocaleString('es-AR')}</div><div class="stat-label">Ingresos</div></div>
-    <div class="stat-card"><div class="stat-value" style="color:#e74c3c">$${totalEgr.toLocaleString('es-AR')}</div><div class="stat-label">Egresos</div></div>
-    <div class="stat-card"><div class="stat-value" style="color:${saldo>=0?'#1a4480':'#e74c3c'}">$${saldo.toLocaleString('es-AR')}</div><div class="stat-label">Saldo</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:#27ae60">$${totalIng.toLocaleString('es-AR')}</div><div class="stat-label">Ingresos${hayFiltroMes?' (per\u00edodo filtrado)':''}</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:#e74c3c">$${totalEgr.toLocaleString('es-AR')}</div><div class="stat-label">Egresos${hayFiltroMes?' (per\u00edodo filtrado)':''}</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:${saldo>=0?'#1a4480':'#e74c3c'}">$${saldo.toLocaleString('es-AR')}</div><div class="stat-label">Saldo${hayFiltroMes?' (per\u00edodo filtrado)':''}</div></div>
     <div class="stat-card"><div class="stat-value" style="color:${saldoEfectivo>=0?'#1a4480':'#e74c3c'}">$${saldoEfectivo.toLocaleString('es-AR')}</div><div class="stat-label">Saldo Efectivo</div></div>
     <div class="stat-card"><div class="stat-value" style="color:${saldoTransferencia>=0?'#1a4480':'#e74c3c'}">$${saldoTransferencia.toLocaleString('es-AR')}</div><div class="stat-label">Saldo Transferencia</div></div>
+    <div class="stat-card" style="border:1px solid var(--accent)"><div class="stat-value" style="color:#1a4480">$${saldoGeneral.toLocaleString('es-AR')}</div><div class="stat-label">Saldo Total (todos los movimientos)</div></div>
   `;
   document.getElementById('caja-count-info').textContent = `${filtered.length} movimientos`;
   document.getElementById('tbody-caja').innerHTML = filtered.length===0
