@@ -4735,6 +4735,31 @@ function renderLiquidaciones(propietarioId) {
 }
 
 
+const MESES_LIQ_MAYUS = ['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'];
+
+// Período global por defecto para una liquidación nueva: mes actual en
+// letras (mayúsculas) + año en números. Ej: "SEPTIEMBRE 2026".
+function liqPeriodoGlobalPorDefecto() {
+  const hoy = new Date();
+  return MESES_LIQ_MAYUS[hoy.getMonth()] + ' ' + hoy.getFullYear();
+}
+
+// Convierte el período global ("SEPTIEMBRE 2026") al formato "MM/AA" usado
+// en el período de cada propiedad. Si no puede interpretarlo, usa el mes y
+// año actuales como respaldo.
+function liqPeriodoGlobalAMMYY(periodoGlobal) {
+  const hoy = new Date();
+  let mes = hoy.getMonth(), anio = hoy.getFullYear();
+  if (periodoGlobal) {
+    const partes = periodoGlobal.trim().toUpperCase().split(/\s+/);
+    const idxMes = MESES_LIQ_MAYUS.indexOf(partes[0]);
+    const anioMatch = periodoGlobal.match(/(\d{4})/);
+    if (idxMes >= 0) mes = idxMes;
+    if (anioMatch) anio = parseInt(anioMatch[1], 10);
+  }
+  return String(mes + 1).padStart(2, '0') + '/' + String(anio).slice(-2);
+}
+
 function liqMakeFilaHTML(idx, prop) {
   const alq  = prop ? (prop.alquiler||'') : '';
   const com  = prop ? (prop.comision||'') : '';
@@ -4754,7 +4779,7 @@ function liqMakeFilaHTML(idx, prop) {
         </div>
         <div class="form-group" style="margin:0">
           <label style="font-size:10px">Período (este prop.)</label>
-          <input type="text" class="form-control" id="lf_per_${idx}" placeholder="Ej: Oct 2025" style="font-size:12px">
+          <input type="text" class="form-control" id="lf_per_${idx}" value="${liqPeriodoGlobalAMMYY(document.getElementById('liq_periodo_global')?.value)}" placeholder="Ej: 09/26" style="font-size:12px">
         </div>
         <div class="form-group" style="margin:0">
           <label style="font-size:10px">Alquiler $</label>
@@ -4839,7 +4864,7 @@ function nuevaLiquidacionCompleta(grupoId) {
   document.getElementById('liq_propietario_nombre').value = liqPropietarioActual
     ? (liqPropietarioActual.nombre||'') + ' ' + (liqPropietarioActual.apellido||'') : '';
   document.getElementById('liq_fecha_global').value = new Date().toISOString().slice(0,10);
-  document.getElementById('liq_periodo_global').value = '';
+  document.getElementById('liq_periodo_global').value = grupoId ? '' : liqPeriodoGlobalPorDefecto();
   document.getElementById('modal-liq-titulo').textContent = 'Nueva Liquidación';
 
   if (!grupoId && liqPropietarioActual) {
@@ -4950,10 +4975,9 @@ function saveLiquidacionGrupo() {
     for (let ei=0; ei<6; ei++) {
       const desc  = document.getElementById('lf_ed_'+idx+'_'+ei)?.value?.trim()||'';
       const monto = parseFloat(document.getElementById('lf_em_'+idx+'_'+ei)?.value)||0;
-      const signo = document.getElementById('lf_es_'+idx+'_'+ei)?.value||'-';
       if (desc || monto) {
-        extras.push({desc, monto, signo});
-        ajuste += (signo==='+') ? monto : -monto;
+        extras.push({desc, monto});
+        ajuste += monto; // positivo suma, negativo resta (tal cual se tipeó)
       }
     }
     const subtotal = alq - com;
@@ -4996,13 +5020,15 @@ function printLiquidacionGrupo(grupoId) {
 
   const bloques = filas.map(l => {
     const periodo = l.periodo || periodoG;
-    // Extras con signo
+    // Extras: el signo/color se determina por el valor real cargado
+    // (positivo = suma en verde, negativo = resta en rojo)
     const extrasItems = (l.extras||[]).filter(e=>e.desc||e.monto);
     const extrasHtml = extrasItems.map(e => {
-      const signo = e.signo||'-';
-      const color = signo==='+' ? '#27ae60' : '#c0392b';
-      const pre   = signo==='+' ? '+ ' : '− ';
-      return `<div class="liq-row" style="padding-left:8px"><span style="color:#555">${e.desc||'Extra'}</span><span style="color:${color}">${pre}${fmtM(e.monto)}</span></div>`;
+      const m = parseFloat(e.monto)||0;
+      const esNegativo = m < 0;
+      const color = esNegativo ? '#c0392b' : '#27ae60';
+      const pre   = esNegativo ? '− ' : '+ ';
+      return `<div class="liq-row" style="padding-left:8px"><span style="color:#555">${e.desc||'Extra'}</span><span style="color:${color}">${pre}${fmtM(Math.abs(m))}</span></div>`;
     }).join('');
 
     // Sección Arreglos/Impuestos: sólo si hay impuestos o extras
@@ -5083,8 +5109,11 @@ function exportLiquidacionesPropietario() {
         <strong>${periodo}</strong><span style="color:#888;font-size:12px">${dateStr}</span>
       </div>`;
     filas.forEach(l => {
-      const extrasHtml = (l.extras||[]).filter(e=>e.desc||e.monto).map(e=>
-        `<div class="liq-row"><span>${e.desc}</span><span style="color:#c0392b">-(${fmtM(e.monto)})</span></div>`).join('');
+      const extrasHtml = (l.extras||[]).filter(e=>e.desc||e.monto).map(e=>{
+        const m = parseFloat(e.monto)||0;
+        const esNegativo = m < 0;
+        return `<div class="liq-row"><span>${e.desc}</span><span style="color:${esNegativo?'#c0392b':'#27ae60'}">${esNegativo?'-':'+'}(${fmtM(Math.abs(m))})</span></div>`;
+      }).join('');
       html += `<div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px dashed #eee">
         <div style="font-weight:600;margin-bottom:6px">${l.direccion||''} ${l.carpeta?'(C'+l.carpeta+')':''}</div>
         <div class="liq-row"><span>Alquiler</span><span>${fmtM(l.alquiler)}</span></div>
