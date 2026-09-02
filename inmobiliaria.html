@@ -6008,7 +6008,7 @@ function renderRecibos() {
   const slice = filtered.slice((ps.p-1)*ps.pp, ps.p*ps.pp);
   document.getElementById('recibo-count-info').textContent=`${filtered.length} recibo(s) \u00b7 Pr\u00f3ximo: ${getNextReciboNum()}`;
   document.getElementById('tbody-recibos').innerHTML=slice.length===0?'<tr><td colspan="7" style="padding:30px;text-align:center;color:#5a6e82">No hay recibos que coincidan.</td></tr>':slice.map(r=>`<tr>
-    <td><strong>${r.numero||'-'}</strong></td><td style="font-size:12px">${fmtDate(r.fecha)}</td>
+    <td><strong style="cursor:pointer;color:var(--accent);text-decoration:underline" onclick='viewRecibo("${r.id}")' title="Abrir PDF del recibo">${r.numero||'-'}</strong></td><td style="font-size:12px">${fmtDate(r.fecha)}</td>
     <td><span class="carpeta-badge">${r.carpeta||'-'}</span></td><td>${r.locatario||'-'}</td>
     <td style="font-size:12px">${r.periodo||'-'}</td><td class="money">${fmtMoney(r.total)}</td>
     <td style="display:flex;gap:4px">
