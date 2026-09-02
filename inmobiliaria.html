@@ -2091,8 +2091,34 @@ function parsePeriodoMesAnio(periodoStr) {
 // El campo "Período" (arriba de Conceptos) controla automáticamente el
 // período de los conceptos "Alquiler" y "Gastos administrativos", que ya
 // existían como campos propios — no se agrega ningún campo nuevo.
+const MESES_RECIBO_NOMBRE = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+// Período por defecto para un recibo nuevo: mes actual en letras + año.
+// Ej: "Septiembre 2026". Coincide con el placeholder ya existente del campo.
+function reciboPeriodoPorDefecto() {
+  const hoy = new Date();
+  return MESES_RECIBO_NOMBRE[hoy.getMonth()] + ' ' + hoy.getFullYear();
+}
+
+// Convierte el texto del Período de arriba ("Septiembre 2026") al formato
+// "MM/AA" que usan los períodos de cada concepto. Si el texto ya viene en
+// formato MM/AA, o no se puede interpretar, se usa tal cual (o se arma con
+// el mes/año actuales como respaldo).
+function reciboPeriodoAMMYY(texto) {
+  if (!texto) return '';
+  const t = texto.trim();
+  if (/^\d{1,2}\s*\/\s*\d{2,4}$/.test(t)) return t; // ya viene en MM/AA
+  const hoy = new Date();
+  let mes = hoy.getMonth(), anio = hoy.getFullYear();
+  const idxMes = MESES_RECIBO_NOMBRE.findIndex(m => t.toLowerCase().startsWith(m.toLowerCase()));
+  const anioMatch = t.match(/(\d{4})/);
+  if (idxMes >= 0) mes = idxMes;
+  if (anioMatch) anio = parseInt(anioMatch[1], 10);
+  return String(mes + 1).padStart(2, '0') + '/' + String(anio).slice(-2);
+}
+
 function sincronizarPeriodoConceptos() {
-  const valor = document.getElementById('r_periodo').value;
+  const valor = reciboPeriodoAMMYY(document.getElementById('r_periodo').value);
   const alqPeriodoEl = document.querySelector('[data-periodo-concepto="Alquiler"]');
   const gaPeriodoEl = document.querySelector('[data-periodo-concepto="Gastos administrativos"]');
   if (alqPeriodoEl) alqPeriodoEl.value = valor;
@@ -6083,6 +6109,9 @@ function initReciboForm() {
     </div>`).join('');
   document.getElementById('r_fecha').value = new Date().toISOString().slice(0,10);
   document.getElementById('r_carpeta').value = '';
+  document.getElementById('r_locatario').value = '';
+  document.getElementById('r_domicilio').value = '';
+  document.getElementById('r_periodo').value = '';
   document.getElementById('carpeta-suggestions').style.display = 'none';
 }
 
@@ -6211,6 +6240,8 @@ function newRecibo() {
   initReciboForm();
   reciboNumeroManual = false;
   document.getElementById('r_numero').value = getNextReciboNum();
+  document.getElementById('r_periodo').value = reciboPeriodoPorDefecto();
+  sincronizarPeriodoConceptos();
   openModal('modal-recibo');
 }
 function editRecibo(id) {
