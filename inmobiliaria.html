@@ -3816,20 +3816,38 @@ function poblarSelectCarpetasFactura() {
   const sel = document.getElementById('fa_carpeta_select'); if (!sel) return;
   const props = getData('prop_data').filter(p=>p.carpeta && p.carpeta!=='-')
     .sort((a,b)=>(parseFloat(a.carpeta)||0)-(parseFloat(b.carpeta)||0));
-  sel.innerHTML = '<option value="">Seleccionar propiedad (opcional)</option>' +
-    props.map(p=>`<option value="${p.carpeta}">${p.carpeta} — ${p.direccion||''}</option>`).join('');
+  const cocheras = (getData('cochera_data')||[]).filter(c=>c.carpeta)
+    .sort((a,b)=>String(a.carpeta).localeCompare(String(b.carpeta)));
+  sel.innerHTML = '<option value="">Seleccionar propiedad o cochera (opcional)</option>' +
+    '<optgroup label="Propiedades">' +
+    props.map(p=>`<option value="${p.carpeta}">${p.carpeta} — ${p.direccion||''}</option>`).join('') +
+    '</optgroup>' +
+    (cocheras.length ? '<optgroup label="Cocheras">' +
+      cocheras.map(c=>`<option value="${c.carpeta}">${c.carpeta} — ${c.direccion||''}</option>`).join('') +
+      '</optgroup>' : '');
 }
 function autoFillFacturaProp() {
   const carpeta = document.getElementById('fa_carpeta_select').value;
   if (!carpeta) return;
   const p = getData('prop_data').find(x=>String(x.carpeta)===String(carpeta));
-  if (!p) return;
-  document.getElementById('fa_carpeta').value = p.carpeta||'';
-  document.getElementById('fa_direccion').value = p.direccion||'';
-  document.getElementById('fa_nombre_inq').value = p.nombre_inq||'';
-  document.getElementById('fa_apellido_inq').value = p.apellido_inq||'';
-  const owner = getOwnerName ? getOwnerName(p.carpeta) : '';
-  if (owner) document.getElementById('fa_propietario').value = owner;
+  if (p) {
+    document.getElementById('fa_carpeta').value = p.carpeta||'';
+    document.getElementById('fa_direccion').value = p.direccion||'';
+    document.getElementById('fa_nombre_inq').value = p.nombre_inq||'';
+    document.getElementById('fa_apellido_inq').value = p.apellido_inq||'';
+    const owner = getOwnerName ? getOwnerName(p.carpeta) : '';
+    if (owner) document.getElementById('fa_propietario').value = owner;
+    return;
+  }
+  const c = (getData('cochera_data')||[]).find(x=>String(x.carpeta)===String(carpeta));
+  if (c) {
+    document.getElementById('fa_carpeta').value = c.carpeta||'';
+    document.getElementById('fa_direccion').value = c.direccion||'';
+    document.getElementById('fa_nombre_inq').value = c.nombre_inq||'';
+    document.getElementById('fa_apellido_inq').value = c.apellido_inq||'';
+    // En cocheras el propietario ya es el nombre directo (no requiere lookup)
+    if (c.propietario) document.getElementById('fa_propietario').value = c.propietario;
+  }
 }
 function saveFactura() {
   const carpeta = document.getElementById('fa_carpeta').value.trim();
