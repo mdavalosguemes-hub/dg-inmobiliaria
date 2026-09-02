@@ -6077,7 +6077,7 @@ function initReciboForm() {
       <input type="text" class="form-control" style="font-size:12px;padding:5px 8px"
         data-periodo-concepto="${c}" placeholder="ej: 03/26" value=""
         ${c === 'Alquiler' ? 'oninput="calcPunitorios()"' : ''}>
-      <input type="number" min="0" step="1" class="form-control"
+      <input type="number" step="1" class="form-control"
         style="width:150px;text-align:right" data-concepto="${c}" data-manual="0"
         oninput="${c === 'Alquiler' ? 'calcPunitorios();' : (c === 'Punitorios' ? "this.dataset.manual='1';" : '')}calcTotal()" value="0">
     </div>`).join('');
@@ -6241,7 +6241,7 @@ function saveRecibo() {
   const periodos = {};
   document.querySelectorAll('[data-concepto]').forEach(el => {
     const v = parseFloat(el.value) || 0;
-    if (v > 0) {
+    if (v !== 0) {
       conceptos[el.dataset.concepto] = v;
       const pEl = document.querySelector(`[data-periodo-concepto="${el.dataset.concepto}"]`);
       if (pEl && pEl.value.trim()) periodos[el.dataset.concepto] = pEl.value.trim();
@@ -6285,7 +6285,7 @@ function viewRecibo(id) {
   const r = getData('recibo_data').find(x => String(x.id) === String(id));
   if (!r) return;
   const fmtM = v => '$ ' + parseFloat(v||0).toLocaleString('es-AR', {minimumFractionDigits:2});
-  const rows = Object.entries(r.conceptos||{}).filter(([,v])=>v>0)
+  const rows = Object.entries(r.conceptos||{}).filter(([,v])=>v!==0)
     .map(([c,v]) => {
       const per = (r.periodos||{})[c] || '';
       return `<tr><td>${c}</td><td style="text-align:center;color:#555;font-size:11px">${per}</td><td class="money">${fmtM(v)}</td></tr>`;
