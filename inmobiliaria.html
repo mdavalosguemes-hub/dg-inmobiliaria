@@ -5030,24 +5030,28 @@ function printLiquidacionGrupo(grupoId) {
       </div>` : '';
 
   const html = `
-    ${buildHeaderHTML({tituloDoc:'Liquidación a Propietario'})}
-    <div style="display:flex;justify-content:space-between;margin-bottom:18px;align-items:baseline">
-      <div style="font-weight:700;font-size:15px">${propNombre}</div>
-      <div style="font-size:12px;color:#666">Rosario, ${dateStr}</div>
-    </div>
-    <div style="font-size:13px;font-weight:700;text-align:center;margin-bottom:16px;letter-spacing:.5px;text-transform:uppercase;color:#1a4480">${periodoG}</div>
-    ${bloques}
-    ${totalSection}
-    <div style="page-break-inside:avoid;margin-top:30px">
-      <div style="display:flex;justify-content:space-around;text-align:center;margin-top:50px">
-        <div style="min-width:180px">
-          <div style="border-top:1.5px solid #1a4480;padding-top:8px">
-            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#1a4480">Firma</div>
-          </div>
+    <div style="display:flex;flex-direction:column;min-height:235mm">
+      <div>
+        ${buildHeaderHTML({tituloDoc:'Liquidación a Propietario'})}
+        <div style="display:flex;justify-content:space-between;margin-bottom:18px;align-items:baseline">
+          <div style="font-weight:700;font-size:15px">${propNombre}</div>
+          <div style="font-size:12px;color:#666">Rosario, ${dateStr}</div>
         </div>
-        <div style="min-width:180px">
-          <div style="border-top:1.5px solid #1a4480;padding-top:8px">
-            <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#1a4480">Aclaración</div>
+        <div style="font-size:13px;font-weight:700;text-align:center;margin-bottom:16px;letter-spacing:.5px;text-transform:uppercase;color:#1a4480">${periodoG}</div>
+        ${bloques}
+        ${totalSection}
+      </div>
+      <div style="page-break-inside:avoid;margin-top:auto;padding-top:30px">
+        <div style="display:flex;justify-content:space-around;text-align:center">
+          <div style="min-width:180px">
+            <div style="border-top:1.5px solid #1a4480;padding-top:8px">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#1a4480">Firma</div>
+            </div>
+          </div>
+          <div style="min-width:180px">
+            <div style="border-top:1.5px solid #1a4480;padding-top:8px">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#1a4480">Aclaración</div>
+            </div>
           </div>
         </div>
       </div>
