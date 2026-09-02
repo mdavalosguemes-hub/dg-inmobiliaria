@@ -6286,6 +6286,10 @@ function viewRecibo(id) {
   if (!r) return;
   const fmtM = v => '$ ' + parseFloat(v||0).toLocaleString('es-AR', {minimumFractionDigits:2});
   const rows = Object.entries(r.conceptos||{}).filter(([,v])=>v!==0)
+    .sort(([a],[b]) => {
+      const ia = CONCEPTOS_RECIBO.indexOf(a), ib = CONCEPTOS_RECIBO.indexOf(b);
+      return (ia===-1 ? 999 : ia) - (ib===-1 ? 999 : ib);
+    })
     .map(([c,v]) => {
       const per = (r.periodos||{})[c] || '';
       return `<tr><td>${c}</td><td style="text-align:center;color:#555;font-size:11px">${per}</td><td class="money">${fmtM(v)}</td></tr>`;
