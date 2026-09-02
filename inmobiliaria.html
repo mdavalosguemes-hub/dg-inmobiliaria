@@ -8462,7 +8462,7 @@ function renderNumeracion() {
     if (yr !== anio) return;
     if (!mapaRecibos[c]) mapaRecibos[c] = {};
     if (!mapaRecibos[c][mo]) mapaRecibos[c][mo] = [];
-    mapaRecibos[c][mo].push(r.numero);
+    mapaRecibos[c][mo].push({numero: r.numero, id: r.id});
   });
 
   if (!filtered.length && !filteredCoch.length) {
@@ -8487,7 +8487,10 @@ function renderNumeracion() {
           : [];
       const esFuturo = (anio === anioActual && i > mesActual);
       if (!nums.length) return '<td style="color:' + (esFuturo?'#e0e0e0':'#ccc') + ';text-align:center">—</td>';
-      return '<td style="text-align:center;font-size:0.82em;font-weight:600;color:var(--primary)">' + nums.join('<br>') + '</td>';
+      const spans = nums.map(n =>
+        '<span onclick=\'viewRecibo("' + n.id + '")\' style="cursor:pointer;color:var(--accent);text-decoration:underline" title="Abrir PDF del recibo">' + (n.numero||'-') + '</span>'
+      ).join('<br>');
+      return '<td style="text-align:center;font-size:0.82em;font-weight:600;color:var(--primary)">' + spans + '</td>';
     }).join('');
   }
 
