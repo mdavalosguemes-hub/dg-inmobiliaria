@@ -2688,7 +2688,7 @@ function showPage(name) {
   if (nav) nav.classList.add('active');
   const renderMap = {
     propiedades: renderPropiedades,
-    propietarios: () => { renderPropietarios(); populateLiqPropietarioSelect(); },
+    propietarios: () => { renderPropietarios(); },
     inquilinos: renderInquilinos,
     cocheras: renderCocheras,
     recibos: renderRecibos,
