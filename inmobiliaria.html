@@ -1295,7 +1295,17 @@
             <option value="USD">U$D Dólares (USD)</option>
           </select>
         </div>
-        <div class="form-group full"><label>Observaciones</label><textarea class="form-control" id="fv_obs" rows="3" placeholder="Características, m2, ambientes..."></textarea></div>
+        <div class="form-group"><label>Tipo de propiedad</label>
+          <select class="form-control" id="fv_tipo">
+            <option value="Vivienda">Vivienda</option>
+            <option value="Comercial">Comercial</option>
+          </select>
+        </div>
+        <div class="form-group"><label>m² de terreno</label><input type="number" class="form-control" id="fv_m2_terreno" placeholder="0"></div>
+        <div class="form-group"><label>m² sup. cubierta</label><input type="number" class="form-control" id="fv_m2_cubierta" placeholder="0"></div>
+        <div class="form-group"><label>m² sup. semicubierta</label><input type="number" class="form-control" id="fv_m2_semicubierta" placeholder="0"></div>
+        <div class="form-group"><label>m² sup. total</label><input type="number" class="form-control" id="fv_m2_total" placeholder="0"></div>
+        <div class="form-group full"><label>Observaciones</label><textarea class="form-control" id="fv_obs" rows="3" placeholder="Características, ambientes..."></textarea></div>
       </div>
     </div>
     <div class="modal-footer">
@@ -1314,10 +1324,10 @@
     <div class="modal-body">
       <div class="form-grid">
         <div class="form-group full"><label>Dirección</label>
-          <select class="form-control" id="fa_direccion" onchange="calcFichaAlquiler()"><option value="">Seleccionar propiedad</option></select>
+          <select class="form-control" id="fal_direccion" onchange="calcFichaAlquiler()"><option value="">Seleccionar propiedad</option></select>
         </div>
         <div class="form-group"><label>Años de contrato</label>
-          <select class="form-control" id="fa_anos" onchange="sincFichaAlquilerMeses();calcFichaAlquiler()">
+          <select class="form-control" id="fal_anos" onchange="sincFichaAlquilerMeses();calcFichaAlquiler()">
             <option value="0">0</option>
             <option value="1">1</option>
             <option value="2" selected>2</option>
@@ -1325,7 +1335,7 @@
           </select>
         </div>
         <div class="form-group"><label>Meses de contrato</label>
-          <select class="form-control" id="fa_meses" onchange="calcFichaAlquiler()">
+          <select class="form-control" id="fal_meses" onchange="calcFichaAlquiler()">
             <option value="3">3</option>
             <option value="4">4</option>
             <option value="6">6</option>
@@ -1335,34 +1345,48 @@
           </select>
         </div>
         <div class="form-group"><label>Ajuste</label>
-          <select class="form-control" id="fa_ajuste">
+          <select class="form-control" id="fal_ajuste">
             <option value="Trimestral">Trimestral</option>
             <option value="Cuatrimestral" selected>Cuatrimestral</option>
             <option value="Semestral">Semestral</option>
             <option value="Anual">Anual</option>
           </select>
         </div>
+        <div class="form-group"><label>Tipo de propiedad</label>
+          <select class="form-control" id="fal_tipo">
+            <option value="Vivienda">Vivienda</option>
+            <option value="Comercial">Comercial</option>
+          </select>
+        </div>
+      </div>
+      <hr style="border:none;border-top:2px solid var(--border);margin:14px 0">
+      <div class="form-grid">
+        <div class="form-group"><label>m² de terreno</label><input type="number" class="form-control" id="fal_m2_terreno" placeholder="0"></div>
+        <div class="form-group"><label>m² sup. cubierta</label><input type="number" class="form-control" id="fal_m2_cubierta" placeholder="0"></div>
+        <div class="form-group"><label>m² sup. semicubierta</label><input type="number" class="form-control" id="fal_m2_semicubierta" placeholder="0"></div>
+        <div class="form-group"><label>m² sup. total</label><input type="number" class="form-control" id="fal_m2_total" placeholder="0"></div>
+        <div class="form-group full"><label>Descripción de la propiedad</label><textarea class="form-control" id="fal_desc" rows="2" placeholder="Ambientes, características, estado..."></textarea></div>
       </div>
       <hr style="border:none;border-top:2px solid var(--border);margin:14px 0">
       <div class="form-grid">
         <div class="form-group"><label>Valor alquiler mensual ($)</label>
-          <input type="number" class="form-control" id="fa_alquiler" placeholder="0" oninput="calcFichaAlquiler()">
+          <input type="number" class="form-control" id="fal_alquiler" placeholder="0" oninput="calcFichaAlquiler()">
         </div>
         <div class="form-group"><label>Gastos adm. mensuales ($) <span style="font-size:10px;color:#888">(auto 3%, editable)</span></label>
-          <input type="number" class="form-control" id="fa_gastos" placeholder="0" oninput="this.dataset.manual='1'">
+          <input type="number" class="form-control" id="fal_gastos" placeholder="0" oninput="this.dataset.manual='1'">
         </div>
       </div>
       <hr style="border:none;border-top:2px solid var(--border);margin:14px 0">
       <div class="form-section-title" style="margin-bottom:12px">Gastos de ingreso</div>
       <div class="form-grid">
         <div class="form-group"><label>Honorarios ($) <span style="font-size:10px;color:#888">(auto alq×meses×5%, editable)</span></label>
-          <input type="number" class="form-control" id="fa_honorarios" placeholder="0" oninput="this.dataset.manual='1'">
+          <input type="number" class="form-control" id="fal_honorarios" placeholder="0" oninput="this.dataset.manual='1'">
         </div>
         <div class="form-group"><label>Sellado ($)</label>
-          <input type="number" class="form-control" id="fa_sellado" placeholder="0">
+          <input type="number" class="form-control" id="fal_sellado" placeholder="0">
         </div>
         <div class="form-group"><label>Averiguaciones ($)</label>
-          <input type="number" class="form-control" id="fa_averig" placeholder="0">
+          <input type="number" class="form-control" id="fal_averig" placeholder="0">
         </div>
       </div>
       <div style="margin-top:16px;font-style:italic;font-size:12px;color:var(--text-muted);border-top:1px solid var(--border);padding-top:12px">
@@ -7459,9 +7483,10 @@ function nuevaFichaVenta() {
   currentId = null; currentType = 'ficha-venta';
   document.getElementById('modal-fv-title').textContent = 'Nueva Ficha de Venta';
   document.getElementById('btn-del-fv').style.display = 'none';
-  ['fv_direccion','fv_obs'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+  ['fv_direccion','fv_obs','fv_m2_terreno','fv_m2_cubierta','fv_m2_semicubierta','fv_m2_total'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
   document.getElementById('fv_valor').value = '';
   document.getElementById('fv_moneda').value = 'ARS';
+  document.getElementById('fv_tipo').value = 'Vivienda';
   openModal('modal-ficha-venta');
 }
 
@@ -7474,6 +7499,11 @@ function editFichaVenta(id) {
   document.getElementById('fv_direccion').value = f.direccion||'';
   document.getElementById('fv_valor').value = f.valor||'';
   document.getElementById('fv_moneda').value = f.moneda||'ARS';
+  document.getElementById('fv_tipo').value = f.tipo||'Vivienda';
+  document.getElementById('fv_m2_terreno').value = f.m2_terreno||'';
+  document.getElementById('fv_m2_cubierta').value = f.m2_cubierta||'';
+  document.getElementById('fv_m2_semicubierta').value = f.m2_semicubierta||'';
+  document.getElementById('fv_m2_total').value = f.m2_total||'';
   document.getElementById('fv_obs').value = f.obs||'';
   openModal('modal-ficha-venta');
 }
@@ -7485,6 +7515,11 @@ function saveFichaVenta() {
     direccion: document.getElementById('fv_direccion').value,
     valor: document.getElementById('fv_valor').value,
     moneda: document.getElementById('fv_moneda').value,
+    tipo: document.getElementById('fv_tipo').value,
+    m2_terreno: document.getElementById('fv_m2_terreno').value,
+    m2_cubierta: document.getElementById('fv_m2_cubierta').value,
+    m2_semicubierta: document.getElementById('fv_m2_semicubierta').value,
+    m2_total: document.getElementById('fv_m2_total').value,
     obs: document.getElementById('fv_obs').value
   };
   if(!f.direccion) { showToast('La dirección es requerida', 'error'); return; }
@@ -7502,9 +7537,22 @@ function getFichaVentaHtml(f) {
   const valorFmt = monedaLabel + ' ' + parseFloat(f.valor||0).toLocaleString('es-AR');
   let html = buildHeaderHTML({tituloDoc:'Ficha de Venta'});
   html += '<div class="info-box" style="display:flex;justify-content:space-between;align-items:center">'
-    + '<div><strong style="font-size:15px">' + (f.direccion||'') + '</strong></div>'
+    + '<div><strong style="font-size:15px">' + (f.direccion||'') + '</strong>'
+    + (f.tipo ? ' <span style="font-size:12px;color:var(--text-muted)">(' + f.tipo + ')</span>' : '')
+    + '</div>'
     + '<div style="font-size:18px;font-weight:700;color:var(--accent)">' + valorFmt + '</div>'
     + '</div>';
+  const m2Items = [
+    f.m2_terreno && ['m² de terreno', f.m2_terreno],
+    f.m2_cubierta && ['m² sup. cubierta', f.m2_cubierta],
+    f.m2_semicubierta && ['m² sup. semicubierta', f.m2_semicubierta],
+    f.m2_total && ['m² sup. total', f.m2_total]
+  ].filter(Boolean);
+  if(m2Items.length) {
+    html += '<table style="width:100%;margin-top:14px"><thead><tr><th>Superficie</th><th class="money">m²</th></tr></thead><tbody>'
+      + m2Items.map(([label,val]) => '<tr><td>' + label + '</td><td class="money">' + val + ' m²</td></tr>').join('')
+      + '</tbody></table>';
+  }
   if(f.obs) html += '<div style="margin-top:16px;font-size:13px;line-height:1.7;white-space:pre-wrap">' + f.obs + '</div>';
   return html;
 }
@@ -7515,6 +7563,11 @@ function imprimirFichaVenta() {
     direccion: document.getElementById('fv_direccion').value,
     valor: document.getElementById('fv_valor').value,
     moneda: document.getElementById('fv_moneda').value,
+    tipo: document.getElementById('fv_tipo').value,
+    m2_terreno: document.getElementById('fv_m2_terreno').value,
+    m2_cubierta: document.getElementById('fv_m2_cubierta').value,
+    m2_semicubierta: document.getElementById('fv_m2_semicubierta').value,
+    m2_total: document.getElementById('fv_m2_total').value,
     obs: document.getElementById('fv_obs').value
   };
   openPrintWindow(getFichaVentaHtml(f), 'Ficha de Venta - ' + (f.direccion||''), 'renovacion');
@@ -7531,7 +7584,7 @@ function imprimirFichaVentaById(id) {
 // ============================================================
 function initFichaAlquilerPage() {
   const props = getData('prop_data').filter(p => p.carpeta && p.carpeta !== '-' && p.direccion);
-  const sel = document.getElementById('fa_direccion');
+  const sel = document.getElementById('fal_direccion');
   if(!sel) return;
   // Preserve selected value
   const prev = sel.value;
@@ -7548,10 +7601,10 @@ function initFichaAlquilerPage() {
 
 function sincFichaAlquilerMeses() {
   // Sync meses dropdown to match años × 12
-  const anos = parseInt(document.getElementById('fa_anos').value) || 0;
+  const anos = parseInt(document.getElementById('fal_anos').value) || 0;
   if(anos === 0) return; // leave meses as-is if 0 years
   const meses = anos * 12;
-  const sel = document.getElementById('fa_meses');
+  const sel = document.getElementById('fal_meses');
   // Try to select matching value, else leave
   for(let i = 0; i < sel.options.length; i++) {
     if(parseInt(sel.options[i].value) === meses) { sel.value = String(meses); return; }
@@ -7559,17 +7612,17 @@ function sincFichaAlquilerMeses() {
 }
 
 function calcFichaAlquiler() {
-  const alq   = parseFloat(document.getElementById('fa_alquiler').value) || 0;
-  const meses = parseFloat(document.getElementById('fa_meses').value) || 24;
+  const alq   = parseFloat(document.getElementById('fal_alquiler').value) || 0;
+  const meses = parseFloat(document.getElementById('fal_meses').value) || 24;
 
   // Gastos admin: auto 3% redondeado de a 100 hacia arriba, editable
-  const gastosEl = document.getElementById('fa_gastos');
+  const gastosEl = document.getElementById('fal_gastos');
   if(alq > 0 && gastosEl && (!gastosEl.dataset.manual || gastosEl.dataset.manual === '0')) {
     gastosEl.value = Math.ceil(alq * 0.03 / 100) * 100;
   }
 
   // Honorarios: auto alq × meses × 5%, editable
-  const honEl = document.getElementById('fa_honorarios');
+  const honEl = document.getElementById('fal_honorarios');
   if(alq > 0 && honEl && (!honEl.dataset.manual || honEl.dataset.manual === '0')) {
     honEl.value = Math.round(alq * meses * 0.05);
   }
@@ -7613,17 +7666,23 @@ function nuevaFichaAlquiler() {
   document.getElementById('modal-fa-title').textContent = 'Nueva Ficha de Alquiler';
   document.getElementById('btn-del-fa').style.display = 'none';
   initFichaAlquilerPage();
-  document.getElementById('fa_direccion').value = '';
-  document.getElementById('fa_anos').value = '2';
-  document.getElementById('fa_meses').value = '24';
-  document.getElementById('fa_ajuste').value = 'Cuatrimestral';
-  document.getElementById('fa_alquiler').value = '';
-  document.getElementById('fa_gastos').value = '';
-  document.getElementById('fa_honorarios').value = '';
-  document.getElementById('fa_sellado').value = '';
-  document.getElementById('fa_averig').value = '';
-  const gastosEl = document.getElementById('fa_gastos'); if(gastosEl) gastosEl.dataset.manual = '0';
-  const honEl = document.getElementById('fa_honorarios'); if(honEl) honEl.dataset.manual = '0';
+  document.getElementById('fal_direccion').value = '';
+  document.getElementById('fal_anos').value = '2';
+  document.getElementById('fal_meses').value = '24';
+  document.getElementById('fal_ajuste').value = 'Cuatrimestral';
+  document.getElementById('fal_alquiler').value = '';
+  document.getElementById('fal_gastos').value = '';
+  document.getElementById('fal_honorarios').value = '';
+  document.getElementById('fal_sellado').value = '';
+  document.getElementById('fal_averig').value = '';
+  document.getElementById('fal_tipo').value = 'Vivienda';
+  document.getElementById('fal_m2_terreno').value = '';
+  document.getElementById('fal_m2_cubierta').value = '';
+  document.getElementById('fal_m2_semicubierta').value = '';
+  document.getElementById('fal_m2_total').value = '';
+  document.getElementById('fal_desc').value = '';
+  const gastosEl = document.getElementById('fal_gastos'); if(gastosEl) gastosEl.dataset.manual = '0';
+  const honEl = document.getElementById('fal_honorarios'); if(honEl) honEl.dataset.manual = '0';
   openModal('modal-ficha-alquiler');
 }
 
@@ -7634,22 +7693,28 @@ function editFichaAlquiler(id) {
   document.getElementById('modal-fa-title').textContent = 'Editar Ficha · Carpeta ' + (f.carpeta||'');
   document.getElementById('btn-del-fa').style.display = 'inline-flex';
   initFichaAlquilerPage();
-  document.getElementById('fa_direccion').value = f.carpeta||'';
-  document.getElementById('fa_anos').value = f.anos||'2';
-  document.getElementById('fa_meses').value = f.meses||'24';
-  document.getElementById('fa_ajuste').value = f.ajuste||'Cuatrimestral';
-  document.getElementById('fa_alquiler').value = f.alquiler||'';
-  document.getElementById('fa_gastos').value = f.gastos||'';
-  document.getElementById('fa_honorarios').value = f.honorarios||'';
-  document.getElementById('fa_sellado').value = f.sellado||'';
-  document.getElementById('fa_averig').value = f.averig||'';
-  const gastosEl = document.getElementById('fa_gastos'); if(gastosEl) gastosEl.dataset.manual = '1';
-  const honEl = document.getElementById('fa_honorarios'); if(honEl) honEl.dataset.manual = '1';
+  document.getElementById('fal_direccion').value = f.carpeta||'';
+  document.getElementById('fal_anos').value = f.anos||'2';
+  document.getElementById('fal_meses').value = f.meses||'24';
+  document.getElementById('fal_ajuste').value = f.ajuste||'Cuatrimestral';
+  document.getElementById('fal_alquiler').value = f.alquiler||'';
+  document.getElementById('fal_gastos').value = f.gastos||'';
+  document.getElementById('fal_honorarios').value = f.honorarios||'';
+  document.getElementById('fal_sellado').value = f.sellado||'';
+  document.getElementById('fal_averig').value = f.averig||'';
+  document.getElementById('fal_tipo').value = f.tipo||'Vivienda';
+  document.getElementById('fal_m2_terreno').value = f.m2_terreno||'';
+  document.getElementById('fal_m2_cubierta').value = f.m2_cubierta||'';
+  document.getElementById('fal_m2_semicubierta').value = f.m2_semicubierta||'';
+  document.getElementById('fal_m2_total').value = f.m2_total||'';
+  document.getElementById('fal_desc').value = f.desc||'';
+  const gastosEl = document.getElementById('fal_gastos'); if(gastosEl) gastosEl.dataset.manual = '1';
+  const honEl = document.getElementById('fal_honorarios'); if(honEl) honEl.dataset.manual = '1';
   openModal('modal-ficha-alquiler');
 }
 
 function saveFichaAlquiler() {
-  const carpeta = document.getElementById('fa_direccion').value;
+  const carpeta = document.getElementById('fal_direccion').value;
   if(!carpeta) { showToast('Seleccioná una propiedad', 'error'); return; }
   const props = getData('prop_data');
   const prop = props.find(p => String(p.carpeta) === String(carpeta));
@@ -7657,14 +7722,20 @@ function saveFichaAlquiler() {
     id:         currentId || Date.now(),
     carpeta:    carpeta,
     direccion:  prop ? (prop.direccion||'') : '',
-    anos:       document.getElementById('fa_anos').value,
-    meses:      document.getElementById('fa_meses').value,
-    ajuste:     document.getElementById('fa_ajuste').value,
-    alquiler:   document.getElementById('fa_alquiler').value,
-    gastos:     document.getElementById('fa_gastos').value,
-    honorarios: document.getElementById('fa_honorarios').value,
-    sellado:    document.getElementById('fa_sellado').value,
-    averig:     document.getElementById('fa_averig').value
+    anos:       document.getElementById('fal_anos').value,
+    meses:      document.getElementById('fal_meses').value,
+    ajuste:     document.getElementById('fal_ajuste').value,
+    alquiler:   document.getElementById('fal_alquiler').value,
+    gastos:     document.getElementById('fal_gastos').value,
+    honorarios: document.getElementById('fal_honorarios').value,
+    sellado:    document.getElementById('fal_sellado').value,
+    averig:     document.getElementById('fal_averig').value,
+    tipo:       document.getElementById('fal_tipo').value,
+    m2_terreno: document.getElementById('fal_m2_terreno').value,
+    m2_cubierta: document.getElementById('fal_m2_cubierta').value,
+    m2_semicubierta: document.getElementById('fal_m2_semicubierta').value,
+    m2_total:   document.getElementById('fal_m2_total').value,
+    desc:       document.getElementById('fal_desc').value
   };
   const data = JSON.parse(localStorage.getItem('fichas_alquiler_data') || '[]');
   if(currentId) { const idx = data.findIndex(x => String(x.id) === String(currentId)); if(idx>=0) data[idx]=f; }
@@ -7685,7 +7756,21 @@ function getFichaAlquilerHtml(f) {
     + '<div style="margin-top:6px;font-size:13px">'
     + '<strong>Duración:</strong> ' + (f.anos||2) + ' años / ' + (f.meses||24) + ' meses'
     + ' &nbsp;·&nbsp; <strong>Ajuste:</strong> ' + (f.ajuste||'Cuatrimestral')
+    + (f.tipo ? ' &nbsp;·&nbsp; <strong>Tipo:</strong> ' + f.tipo : '')
     + '</div></div>';
+
+  const m2Items = [
+    f.m2_terreno && ['m² de terreno', f.m2_terreno],
+    f.m2_cubierta && ['m² sup. cubierta', f.m2_cubierta],
+    f.m2_semicubierta && ['m² sup. semicubierta', f.m2_semicubierta],
+    f.m2_total && ['m² sup. total', f.m2_total]
+  ].filter(Boolean);
+  if(m2Items.length) {
+    html += '<table style="width:100%;margin-top:14px"><thead><tr><th>Superficie</th><th class="money">m²</th></tr></thead><tbody>'
+      + m2Items.map(([label,val]) => '<tr><td>' + label + '</td><td class="money">' + val + ' m²</td></tr>').join('')
+      + '</tbody></table>';
+  }
+  if(f.desc) html += '<div style="margin-top:14px;font-size:13px;line-height:1.6;white-space:pre-wrap">' + f.desc + '</div>';
 
   // Alquiler mensual
   html += '<table style="width:100%;margin-top:14px"><thead><tr><th>Concepto mensual</th><th class="money">Valor</th></tr></thead><tbody>';
@@ -7712,20 +7797,26 @@ function getFichaAlquilerHtml(f) {
 }
 
 function imprimirFichaAlquiler() {
-  const carpeta = document.getElementById('fa_direccion').value;
+  const carpeta = document.getElementById('fal_direccion').value;
   const props = getData('prop_data');
   const prop = props.find(p => String(p.carpeta) === String(carpeta));
   const f = {
     carpeta:    carpeta,
     direccion:  prop ? (prop.direccion||'') : '',
-    anos:       document.getElementById('fa_anos').value,
-    meses:      document.getElementById('fa_meses').value,
-    ajuste:     document.getElementById('fa_ajuste').value,
-    alquiler:   document.getElementById('fa_alquiler').value,
-    gastos:     document.getElementById('fa_gastos').value,
-    honorarios: document.getElementById('fa_honorarios').value,
-    sellado:    document.getElementById('fa_sellado').value,
-    averig:     document.getElementById('fa_averig').value
+    anos:       document.getElementById('fal_anos').value,
+    meses:      document.getElementById('fal_meses').value,
+    ajuste:     document.getElementById('fal_ajuste').value,
+    alquiler:   document.getElementById('fal_alquiler').value,
+    gastos:     document.getElementById('fal_gastos').value,
+    honorarios: document.getElementById('fal_honorarios').value,
+    sellado:    document.getElementById('fal_sellado').value,
+    averig:     document.getElementById('fal_averig').value,
+    tipo:       document.getElementById('fal_tipo').value,
+    m2_terreno: document.getElementById('fal_m2_terreno').value,
+    m2_cubierta: document.getElementById('fal_m2_cubierta').value,
+    m2_semicubierta: document.getElementById('fal_m2_semicubierta').value,
+    m2_total:   document.getElementById('fal_m2_total').value,
+    desc:       document.getElementById('fal_desc').value
   };
   openPrintWindow(getFichaAlquilerHtml(f), 'Ficha de Alquiler - ' + (f.direccion||f.carpeta||''), 'renovacion');
 }
