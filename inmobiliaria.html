@@ -7410,9 +7410,27 @@ function saveArreglo() {
   showToast('Arreglo guardado \u2713');
 }
 
+// Libera en el servidor el número de un recibo borrado, para que el
+// próximo "Nuevo Recibo" de ese mes lo pueda reutilizar (sin dejar
+// saltos). No bloquea el borrado si falla: es una mejora, no algo crítico.
+function liberarNumeroRecibo(numero) {
+  if (!numero) return;
+  const m = String(numero).trim().match(/^(\d{4}-\d{2}-)(\d+)$/);
+  if (!m) return; // número con formato manual/no estándar: no se puede reutilizar de forma segura
+  const prefix = m[1];
+  const number = parseInt(m[2], 10);
+  fetch(SERVER_URL + '/api/release-number', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefix, number })
+  }).catch(e => console.warn('No se pudo liberar el n\u00famero de recibo (no es grave, solo no se va a reutilizar):', e));
+}
+
 function deleteReciboDesdeListado(id) {
   if (!confirm('¿Seguro que querés eliminar este recibo? Esta acción no se puede deshacer.')) return;
+  const r = getData('recibo_data').find(x => String(x.id) === String(id));
   deleteRecord('recibo_data', id);
+  if (r) liberarNumeroRecibo(r.numero);
   renderRecibos();
   showToast('Recibo eliminado');
 }
@@ -7429,6 +7447,10 @@ function deleteRec(type) {
   // tienen su propio mecanismo de borrado (prop_deleted, etc.) y siguen igual.
   const BORRADO_SUAVE = ['recibo','contrato','docrenov','docajuste','ficha-venta','ficha-alquiler','arreglo'];
   if (BORRADO_SUAVE.includes(type)) {
+    if (type === 'recibo') {
+      const r = getData('recibo_data').find(x => String(x.id) === String(currentId));
+      if (r) liberarNumeroRecibo(r.numero);
+    }
     deleteRecord(key, currentId);
   } else {
     setData(key,getData(key).filter(x=>String(x.id)!==String(currentId)));

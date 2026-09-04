@@ -42,6 +42,11 @@ async function initSchema() {
       key TEXT PRIMARY KEY,
       value INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS released_numbers (
+      key TEXT NOT NULL,
+      number INTEGER NOT NULL,
+      PRIMARY KEY (key, number)
+    );
     CREATE TABLE IF NOT EXISTS users (
       email TEXT PRIMARY KEY,
       name TEXT,
@@ -156,15 +161,40 @@ function fusionarPorId(existentes, entrantes) {
 // base de datos, y lo incrementa de forma atómica (una sola consulta SQL
 // que no puede ejecutarse "a medias" ni pisarse entre dos pedidos
 // simultáneos), así que nunca puede haber dos números iguales.
+//
+// Además, cuando se borra un recibo, su número se guarda en
+// "released_numbers" (una bolsa de huecos reutilizables). Al pedir un
+// número nuevo, PRIMERO se busca ahí el más chico disponible (también de
+// forma atómica, con SELECT ... FOR UPDATE SKIP LOCKED, para que dos
+// pedidos simultáneos nunca se lleven el mismo hueco) y recién si no hay
+// ninguno liberado se sigue con el correlativo de siempre. Así, borrar un
+// recibo y crear uno nuevo reutiliza el número, sin dejar saltos.
 // ============================================================
 app.post('/api/next-number', async (req, res) => {
   const { prefix, seedFrom } = req.body || {};
   if (!prefix) return res.status(400).json({ ok: false, error: 'Falta prefix' });
   const key = 'recibo:' + prefix;
-  // Si es la primera vez que se pide un número para este prefijo, el
-  // contador arranca desde el máximo ya usado (seedFrom, calculado por el
-  // navegador a partir de los recibos existentes), para no pisar numeración
-  // vieja cargada antes de este cambio.
+
+  // 1) ¿Hay algún número liberado (de un recibo borrado) esperando? Se toma
+  // el más chico, de forma atómica.
+  const liberado = await pool.query(
+    `WITH picked AS (
+       SELECT number FROM released_numbers
+       WHERE key = $1
+       ORDER BY number
+       LIMIT 1
+       FOR UPDATE SKIP LOCKED
+     )
+     DELETE FROM released_numbers
+     WHERE key = $1 AND number IN (SELECT number FROM picked)
+     RETURNING number`,
+    [key]
+  );
+  if (liberado.rows.length > 0) {
+    return res.json({ ok: true, next: liberado.rows[0].number });
+  }
+
+  // 2) No hay ninguno liberado: sigue el correlativo de siempre.
   const semilla = Number.isInteger(seedFrom) ? seedFrom : 0;
   const { rows } = await pool.query(
     `INSERT INTO counters (key, value) VALUES ($1, $2 + 1)
@@ -173,6 +203,21 @@ app.post('/api/next-number', async (req, res) => {
     [key, semilla]
   );
   res.json({ ok: true, next: rows[0].value });
+});
+
+// Libera un número (por ejemplo, al borrar un recibo) para que el próximo
+// /api/next-number lo pueda volver a entregar.
+app.post('/api/release-number', async (req, res) => {
+  const { prefix, number } = req.body || {};
+  if (!prefix || !Number.isInteger(number)) {
+    return res.status(400).json({ ok: false, error: 'Faltan prefix/number' });
+  }
+  const key = 'recibo:' + prefix;
+  await pool.query(
+    'INSERT INTO released_numbers (key, number) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+    [key, number]
+  );
+  res.json({ ok: true });
 });
 
 app.post('/api/set', async (req, res) => {
