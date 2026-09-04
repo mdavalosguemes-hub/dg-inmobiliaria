@@ -5062,10 +5062,16 @@ function saveLiquidacionGrupo() {
 
   const grupoId = currentId || ('G'+Date.now());
   const nuevas = [];
+  let filasVacias = 0;
 
   for (const idx of liqFilaIds) {
-    const carpeta = document.getElementById('lf_carp_'+idx)?.value?.trim();
-    if (!carpeta) continue;
+    const carpeta   = document.getElementById('lf_carp_'+idx)?.value?.trim()||'';
+    const direccion = document.getElementById('lf_dir_'+idx)?.value?.trim()||'';
+    // Se guarda con Carpeta y/o Dirección; solo se descarta si las DOS están
+    // vacías (fila realmente sin cargar). Antes exigía Carpeta sí o sí, y
+    // por eso una propiedad sin número (ej. una cochera cargada a mano)
+    // desaparecía en silencio al guardar.
+    if (!carpeta && !direccion) { filasVacias++; continue; }
     const alq  = parseFloat(document.getElementById('lf_alq_'+idx)?.value)||0;
     const com  = parseFloat(document.getElementById('lf_com_'+idx)?.value)||0;
     const imp  = parseFloat(document.getElementById('lf_imp_'+idx)?.value)||0;
@@ -5089,13 +5095,16 @@ function saveLiquidacionGrupo() {
       propietarioId: propId,
       propietarioNombre: propNombre,
       carpeta,
-      direccion: document.getElementById('lf_dir_'+idx)?.value||'',
+      direccion,
       periodo: periodoLocal,
       periodoGlobal: periodoG,
       fecha: fechaG,
       alquiler: alq, comision: com, impuestos: imp,
       extras, subtotal, total, obs
     });
+  }
+  if (filasVacias > 0) {
+    showToast(filasVacias + ' fila(s) sin Carpeta ni Dirección no se guardaron', 'error');
   }
 
   if (!nuevas.length) { showToast('Agregá al menos una propiedad','error'); return; }
