@@ -5929,17 +5929,16 @@ function parsePeriodo(periodo) {
   return null;
 }
 
-function getNextReciboNum(fechaOPeriodo) {
-  // Acepta yyyy-mm-dd (fecha de emision) o texto de periodo ("Abril 2026")
-  // Siempre prioriza la fecha de emision del modal si existe
+// Calcula el prefijo ("2026-09-") y el máximo número ya usado localmente
+// para ese mes (semilla), a partir de la fecha de emisión o el período.
+function getReciboPrefixYSeed(fechaOPeriodo) {
   let year, month;
   const fechaEmision = document.getElementById('r_fecha') ? document.getElementById('r_fecha').value : '';
   const ref = fechaEmision || fechaOPeriodo || '';
   if (ref && ref.match(/^\d{4}-\d{2}/)) {
-    // Formato yyyy-mm-dd o yyyy-mm
     const parts = ref.split('-');
     year  = parseInt(parts[0]);
-    month = parseInt(parts[1]) - 1; // 0-indexed
+    month = parseInt(parts[1]) - 1;
   } else {
     const parsed = parsePeriodo(ref);
     if (parsed) {
@@ -5957,8 +5956,41 @@ function getNextReciboNum(fechaOPeriodo) {
   const nums = recibos
     .filter(r => r.numero && r.numero.startsWith(prefix))
     .map(r => parseInt(r.numero.slice(prefix.length)) || 0);
-  const next = (nums.length > 0 ? Math.max(...nums) : 0) + 1;
-  return prefix + String(next).padStart(2, '0');
+  const seedFrom = nums.length > 0 ? Math.max(...nums) : 0;
+  return { prefix, seedFrom };
+}
+
+function getNextReciboNum(fechaOPeriodo) {
+  // Acepta yyyy-mm-dd (fecha de emision) o texto de periodo ("Abril 2026")
+  // Cálculo LOCAL: sirve como sugerencia mientras se completa el formulario.
+  // El número definitivo se pide al servidor recién al guardar (ver
+  // obtenerNumeroReciboAtomico), para que nunca choque con el de otra PC.
+  const { prefix, seedFrom } = getReciboPrefixYSeed(fechaOPeriodo);
+  return prefix + String(seedFrom + 1).padStart(2, '0');
+}
+
+// Le pide al servidor el próximo número de recibo de forma ATÓMICA: aunque
+// dos PCs lo pidan en el mismo instante, el servidor garantiza que nunca
+// devuelve el mismo número dos veces (ver /api/next-number en servidor.js).
+// Si por algún motivo no hay conexión, usa como respaldo el cálculo local
+// (mejor que dejar el recibo sin número, aunque en ese caso puntual sigue
+// existiendo el riesgo de choque si justo la otra PC también se queda sin
+// conexión en el mismo instante — caso muy poco probable).
+async function obtenerNumeroReciboAtomico(fechaOPeriodo) {
+  const { prefix, seedFrom } = getReciboPrefixYSeed(fechaOPeriodo);
+  try {
+    const res = await fetch(SERVER_URL + '/api/next-number', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prefix, seedFrom })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    return prefix + String(data.next).padStart(2, '0');
+  } catch (e) {
+    console.warn('No se pudo obtener el n\u00famero de recibo del servidor, se usa el c\u00e1lculo local:', e);
+    return prefix + String(seedFrom + 1).padStart(2, '0');
+  }
 }
 
 
@@ -6344,8 +6376,7 @@ function editRecibo(id) {
   calcTotal(); openModal('modal-recibo');
 }
 
-function saveRecibo() {
-  const data = getData('recibo_data');
+async function saveRecibo() {
   const carpeta = document.getElementById('r_carpeta').value;
   const locatario = document.getElementById('r_locatario').value;
   if (!carpeta || !locatario) { showToast('Carpeta y locatario requeridos', 'error'); return; }
@@ -6361,14 +6392,22 @@ function saveRecibo() {
   });
   const total = Object.values(conceptos).reduce((s, v) => s + v, 0);
   const periodo = document.getElementById('r_periodo').value;
-  // Al editar se conserva el número si no se modificó; al crear se usa el sugerido.
-  // El campo r_numero es editable por el usuario en ambos casos.
+  // Al editar, o si el usuario escribió el número a mano, se respeta tal
+  // cual. Si es un recibo NUEVO con número automático, se le pide el
+  // definitivo al servidor recién ahora (de forma atómica), para que nunca
+  // pueda chocar con el que esté guardando otra PC en el mismo instante.
   let numero = (document.getElementById('r_numero').value || '').trim();
-  if (!numero) {
+  const esNuevoConNumeroAutomatico = !currentId && !reciboNumeroManual;
+  if (esNuevoConNumeroAutomatico) {
+    numero = await obtenerNumeroReciboAtomico(document.getElementById('r_fecha').value);
+    document.getElementById('r_numero').value = numero;
+  } else if (!numero) {
+    const dataActual = getData('recibo_data');
     numero = currentId
-      ? ((data.find(r => String(r.id) === String(currentId)) || {}).numero || getNextReciboNum())
+      ? ((dataActual.find(r => String(r.id) === String(currentId)) || {}).numero || getNextReciboNum())
       : getNextReciboNum();
   }
+  const data = getData('recibo_data');
   const recibo = {
     id: currentId || Date.now(),
     numero,

@@ -38,6 +38,10 @@ async function initSchema() {
       value JSONB NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS counters (
+      key TEXT PRIMARY KEY,
+      value INTEGER NOT NULL DEFAULT 0
+    );
     CREATE TABLE IF NOT EXISTS users (
       email TEXT PRIMARY KEY,
       name TEXT,
@@ -142,6 +146,34 @@ function fusionarPorId(existentes, entrantes) {
   }
   return Array.from(mapa.values());
 }
+
+// ============================================================
+// NUMERACIÓN ATÓMICA (ej. números de recibo por mes)
+// Antes: cada PC calculaba "el próximo número" mirando su propia copia de
+// los datos -> si dos personas abrían "Nuevo Recibo" casi al mismo tiempo,
+// las dos calculaban el mismo número y se pisaban.
+// Ahora: el servidor lleva un contador POR PREFIJO (ej. "2026-09-") en la
+// base de datos, y lo incrementa de forma atómica (una sola consulta SQL
+// que no puede ejecutarse "a medias" ni pisarse entre dos pedidos
+// simultáneos), así que nunca puede haber dos números iguales.
+// ============================================================
+app.post('/api/next-number', async (req, res) => {
+  const { prefix, seedFrom } = req.body || {};
+  if (!prefix) return res.status(400).json({ ok: false, error: 'Falta prefix' });
+  const key = 'recibo:' + prefix;
+  // Si es la primera vez que se pide un número para este prefijo, el
+  // contador arranca desde el máximo ya usado (seedFrom, calculado por el
+  // navegador a partir de los recibos existentes), para no pisar numeración
+  // vieja cargada antes de este cambio.
+  const semilla = Number.isInteger(seedFrom) ? seedFrom : 0;
+  const { rows } = await pool.query(
+    `INSERT INTO counters (key, value) VALUES ($1, $2 + 1)
+     ON CONFLICT (key) DO UPDATE SET value = GREATEST(counters.value, $2) + 1
+     RETURNING value`,
+    [key, semilla]
+  );
+  res.json({ ok: true, next: rows[0].value });
+});
 
 app.post('/api/set', async (req, res) => {
   const { key, value } = req.body || {};
