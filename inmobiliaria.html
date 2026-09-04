@@ -2042,6 +2042,10 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<div id="sync-status-badge" style="position:fixed;top:14px;right:14px;z-index:99999;display:none;align-items:center;gap:7px;padding:8px 14px;border-radius:20px;font-size:12.5px;font-weight:700;box-shadow:0 2px 10px rgba(0,0,0,0.15);transition:background .2s,color .2s">
+  <span id="sync-status-dot" style="width:8px;height:8px;border-radius:50%;display:inline-block"></span>
+  <span id="sync-status-text"></span>
+</div>
 <script>
 // ============================================================
 // AUTO-RESTORE: datos del backup 2026-03-25 pre-cargados
@@ -2187,6 +2191,41 @@ const MESES_ES = ['enero','febrero','marzo','abril','mayo','junio','julio','agos
 // - Datos maestros base: constantes INIT_* (siempre actualizados al abrir el archivo)
 // - Ediciones/adiciones del usuario: localStorage (se fusionan sobre la base)
 // La clave de fusión es 'carpeta' para propiedades e inquilinos, 'id' para propietarios
+
+// ============================================================
+// HELPERS DE SINCRONIZACIÓN SEGURA (registro por registro)
+// Se usan en las colecciones "vivas" del día a día (recibos, liquidaciones,
+// caja, ajustes, etc.) para que la fusión del servidor (/api/set) pueda
+// combinar correctamente lo que guarda cada PC sin perder datos.
+// ============================================================
+function nowTS() { return Date.now(); }
+
+// Devuelve el array sin los registros borrados (borrado suave, _deleted).
+// Usar SIEMPRE que se vaya a MOSTRAR una colección de este tipo.
+function visibles(arr) { return (arr || []).filter(x => !x || !x._deleted); }
+
+// Guarda (crea o actualiza) un registro dentro de una colección, sellándolo
+// con la marca de tiempo actual. Devuelve el array completo ya actualizado
+// (incluye los borrados suaves, no filtrar antes de guardar).
+function upsertRecord(key, record) {
+  const arr = getData(key) || [];
+  record._updatedAt = nowTS();
+  const idx = arr.findIndex(x => String(x.id) === String(record.id));
+  if (idx >= 0) arr[idx] = record; else arr.push(record);
+  setData(key, arr);
+  return arr;
+}
+
+// Marca un registro como eliminado (NO lo borra del array) para que la
+// fusión con el servidor respete el borrado y no lo "resucite" desde otra
+// PC que todavía tenía la versión vieja sin ese borrado.
+function deleteRecord(key, id) {
+  const arr = getData(key) || [];
+  const idx = arr.findIndex(x => String(x.id) === String(id));
+  if (idx >= 0) { arr[idx]._deleted = true; arr[idx]._updatedAt = nowTS(); }
+  setData(key, arr);
+  return arr;
+}
 
 function getData(key) {
   if (key === 'prop_data') {
@@ -2679,6 +2718,16 @@ function guardarValorHistoricoMes(mes) {
 // ============================================================
 // NAVIGATION
 // ============================================================
+// Si /api/set fusionó nuestro guardado con registros que la otra PC había
+// guardado mientras tanto, refrescamos la pantalla actual para mostrarlos
+// (salvo que haya un modal abierto, para no interrumpir una carga en curso).
+function onDatosFusionadosDesdeServidor(key) {
+  const activo = document.querySelector('.page.active');
+  if (!activo) return;
+  if (document.querySelector('.modal-overlay.open')) return;
+  showPage(activo.id.replace(/^page-/, ''));
+}
+
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -2750,7 +2799,7 @@ function getCocherasData() {
 }
 
 function renderCocheras() {
-  const data = getCocherasData();
+  const data = visibles(getCocherasData());
   const q = (document.getElementById('search-cochera')||{}).value || '';
   const ql = q.toLowerCase();
   const filtered = !ql ? data : data.filter(c =>
@@ -2832,7 +2881,8 @@ function saveCochera() {
     nro_cuenta: document.getElementById('coch_nrocuenta').value,
     observaciones: document.getElementById('coch_obs').value,
     estado: document.getElementById('coch_estado').value,
-    tipo: 'Cochera', uso: 'Cochera'
+    tipo: 'Cochera', uso: 'Cochera',
+    _updatedAt: nowTS()
   };
   if (currentId) {
     const idx = data.findIndex(x => String(x.id) === String(currentId));
@@ -2848,8 +2898,7 @@ function saveCochera() {
 
 function deleteCochera() {
   if (!currentId || !confirm('¿Eliminar esta cochera?')) return;
-  const data = getCocherasData().filter(x => String(x.id) !== String(currentId));
-  setData('cochera_data', data);
+  deleteRecord('cochera_data', currentId);
   closeModal('modal-cochera');
   renderCocheras();
   showToast('Cochera eliminada');
@@ -3525,7 +3574,7 @@ function alqAbrirModalAgregar() {
   if (!lista) return;
 
   const props = (getData('prop_data') || []).filter(p => p.carpeta && p.carpeta !== '-');
-  const cocheras = (getData('cochera_data') || []).filter(c => c.carpeta);
+  const cocheras = visibles(getData('cochera_data') || []).filter(c => c.carpeta);
 
   _alqOpcionesCache = [
     ...props.map(p => ({
@@ -3772,7 +3821,7 @@ function onFacturaAnioChange() { poblarMesesFactura(); renderFacturas(); }
 
 function renderFacturas() {
   initFacturasFiltrosSiHaceFalta();
-  const data = getFacturasData();
+  const data = visibles(getFacturasData());
   const q = (document.getElementById('search-factura').value||'').toLowerCase();
   const anio = document.getElementById('filter-factura-anio').value;
   const mes = document.getElementById('filter-factura-mes').value;
@@ -3828,6 +3877,7 @@ function guardarFacturaMes(id, mesKey, campo, valor) {
   if (!data[idx].meses) data[idx].meses = {};
   if (!data[idx].meses[mesKey]) data[idx].meses[mesKey] = {monto:'',factura:''};
   data[idx].meses[mesKey][campo] = valor;
+  data[idx]._updatedAt = nowTS();
   setFacturasData(data);
   showToast('Guardado ✓');
 }
@@ -3866,7 +3916,7 @@ function poblarSelectCarpetasFactura() {
   const sel = document.getElementById('fa_carpeta_select'); if (!sel) return;
   const props = getData('prop_data').filter(p=>p.carpeta && p.carpeta!=='-')
     .sort((a,b)=>(parseFloat(a.carpeta)||0)-(parseFloat(b.carpeta)||0));
-  const cocheras = (getData('cochera_data')||[]).filter(c=>c.carpeta)
+  const cocheras = visibles(getData('cochera_data')||[]).filter(c=>c.carpeta)
     .sort((a,b)=>String(a.carpeta).localeCompare(String(b.carpeta)));
   sel.innerHTML = '<option value="">Seleccionar propiedad o cochera (opcional)</option>' +
     '<optgroup label="Propiedades">' +
@@ -3913,7 +3963,8 @@ function saveFactura() {
     iva_inq: document.getElementById('fa_iva_inq').value,
     propietario: document.getElementById('fa_propietario').value,
     iva_prop: document.getElementById('fa_iva_prop').value,
-    meses: {}
+    meses: {},
+    _updatedAt: nowTS()
   };
   const idx = data.findIndex(x=>String(x.id)===String(doc.id));
   if (idx>=0) { doc.meses = data[idx].meses || {}; data[idx] = doc; }
@@ -3927,8 +3978,7 @@ function saveFactura() {
 function deleteFacturaActual() {
   if (!facturaCurrentId) return;
   if (!confirm('¿Eliminar esta propiedad del listado de Facturas?')) return;
-  const data = getFacturasData().filter(x=>String(x.id)!==String(facturaCurrentId));
-  setFacturasData(data);
+  deleteRecord('facturas_data', facturaCurrentId);
   facturaCurrentId = null;
   closeModal('modal-factura');
   renderFacturas();
@@ -4009,7 +4059,7 @@ function limpiarFiltrosSellados() {
 
 function renderSellados() {
   initSelladosFiltros();
-  const data = getSelladosData();
+  const data = visibles(getSelladosData());
   const q = (document.getElementById('search-sellado').value||'').toLowerCase();
   const anio = document.getElementById('filter-sellado-anio').value;
   const periodo = document.getElementById('filter-sellado-quincena').value;
@@ -4137,7 +4187,8 @@ function saveSellado() {
     fojas: document.getElementById('s_fojas').value,
     valor: document.getElementById('s_valor').value,
     garantias: document.getElementById('s_garantias').value,
-    sellado: document.getElementById('s_sellado').value
+    sellado: document.getElementById('s_sellado').value,
+    _updatedAt: nowTS()
   };
   const data = getSelladosData();
   const idx = data.findIndex(x=>String(x.id)===String(doc.id));
@@ -4151,14 +4202,14 @@ function saveSellado() {
 function deleteSelladoActual() {
   if (!selladoCurrentId) return;
   if (!confirm('¿Eliminar este sellado?')) return;
-  setSelladosData(getSelladosData().filter(x=>String(x.id)!==String(selladoCurrentId)));
+  deleteRecord('sellados_data', selladoCurrentId);
   selladoCurrentId = null;
   closeModal('modal-sellado');
   renderSellados();
   showToast('Sellado eliminado');
 }
 function exportSellados() {
-  const data = getSelladosData();
+  const data = visibles(getSelladosData());
   if (!data.length) { alert('No hay sellados para exportar'); return; }
   const rows = data.map(s=>({
     'Orden Nº': s.orden||'',
@@ -4690,13 +4741,13 @@ function liqSeleccionarPropietario(id) {
 }
 
 function getLiquidaciones(propietarioId) {
-  return (getData('liquidacion_data') || []).filter(l => String(l.propietarioId) === String(propietarioId));
+  return visibles(getData('liquidacion_data') || []).filter(l => String(l.propietarioId) === String(propietarioId));
 }
 
 function eliminarLiquidacionGrupo(grupoId) {
   if (!confirm('¿Eliminar esta liquidación? Esta acción no se puede deshacer.')) return;
   let all = getData('liquidacion_data') || [];
-  all = all.filter(l => (l.grupoId||l.id) !== grupoId);
+  all = all.map(l => (l.grupoId||l.id) === grupoId ? Object.assign({}, l, {_deleted:true, _updatedAt: nowTS()}) : l);
   setData('liquidacion_data', all);
   if (liqPropietarioActual) renderLiquidaciones(liqPropietarioActual.id);
   showToast('Liquidación eliminada');
@@ -5049,7 +5100,12 @@ function saveLiquidacionGrupo() {
 
   if (!nuevas.length) { showToast('Agregá al menos una propiedad','error'); return; }
   let all = getData('liquidacion_data')||[];
-  all = all.filter(l => (l.grupoId||l.id) !== grupoId);
+  // Las filas viejas de este grupo se regeneran con IDs nuevos (no se
+  // reutilizan): en vez de descartarlas en silencio, se marcan como
+  // eliminadas (borrado suave) para que la fusión con el servidor no las
+  // revida desde otra PC que todavía tenga la versión anterior.
+  all = all.map(l => (l.grupoId||l.id) === grupoId ? Object.assign({}, l, {_deleted:true, _updatedAt: nowTS()}) : l);
+  nuevas.forEach(l => { l._updatedAt = nowTS(); });
   all = all.concat(nuevas);
   setData('liquidacion_data', all);
   closeModal('modal-liquidacion');
@@ -5327,7 +5383,7 @@ CONTRACT_VARS.comercio = CONTRACT_VARS.dpto;
 
 
 function renderContratos() {
-  const data=getData('contrato_data');
+  const data=visibles(getData('contrato_data'));
   const q=(document.getElementById('search-contrato').value||'').toLowerCase();
   let filtered=data.filter(c=>!q||[c.carpeta,c.tipo,c.locatario_nombre,c.locatario_datos,c.direccion].join(' ').toLowerCase().includes(q));
   const ps=PS.contratos; const tp=Math.ceil(filtered.length/ps.pp)||1; ps.p=Math.min(ps.p,tp);
@@ -5755,7 +5811,7 @@ function saveContrato() {
   if (!tipo || !carpeta) { showToast('Tipo y carpeta son requeridos','error'); return; }
   const data  = getData('contrato_data') || [];
   const v     = getContratoVals(tipo);
-  const contrato = Object.assign({ id: currentId || Date.now(), tipo, carpeta }, v);
+  const contrato = Object.assign({ id: currentId || Date.now(), tipo, carpeta, _updatedAt: nowTS() }, v);
   const codeudores = getCdFields();
   contrato.codeudores = codeudores;
   if (currentId) {
@@ -6031,7 +6087,8 @@ function printLlaves() {
     genero_loc: genero_loc,
     fecha_inicio: fecha_inicio,
     fecha_fin: fecha_fin,
-    obs: obs
+    obs: obs,
+    _updatedAt: nowTS()
   });
   localStorage.setItem('recibos_llaves', JSON.stringify(recibosLlaves));
   setData('recibos_llaves', recibosLlaves);
@@ -6082,7 +6139,7 @@ function limpiarFiltrosRecibos() {
 
 function renderRecibos() {
   initFiltroAniosRecibos();
-  const data = getData('recibo_data');
+  const data = visibles(getData('recibo_data'));
   const q     = (document.getElementById('search-recibo').value || '').toLowerCase();
   const fMes  = document.getElementById('filter-recibo-mes')?.value;
   const fAnio = document.getElementById('filter-recibo-anio')?.value;
@@ -6153,7 +6210,7 @@ function onCarpetaInput() {
   ).map(p => ({...p, _tipo: 'propiedad'}));
 
   // Buscar en cocheras
-  const cocheras = getCocherasData().filter(c=>c.carpeta&&c.estado!=='Inactivo');
+  const cocheras = visibles(getCocherasData()).filter(c=>c.carpeta&&c.estado!=='Inactivo');
   const cochMatches = cocheras.filter(c =>
     String(c.carpeta).toLowerCase().startsWith(q.toLowerCase()) ||
     (c.direccion||'').toLowerCase().includes(q.toLowerCase()) ||
@@ -6322,7 +6379,8 @@ function saveRecibo() {
     periodo,
     conceptos,
     periodos,
-    total
+    total,
+    _updatedAt: nowTS()
   };
   if (currentId) {
     const idx = data.findIndex(r => String(r.id) === String(currentId));
@@ -6479,7 +6537,7 @@ function renderRenovaciones() {
 }
 
 function renderDocRenov() {
-  let data=getData('docrenov_data');
+  let data=visibles(getData('docrenov_data'));
   const qEl=document.getElementById('search-docrenov');
   const mesEl=document.getElementById('filter-docrenov-mes');
   const anioEl=document.getElementById('filter-docrenov-anio');
@@ -6607,7 +6665,7 @@ function saveDocRenov() {
       if(_match) _propId = _match.id || '';
     }
   }
-  const doc={id:currentId||Date.now(),carpeta,prop_id:_propId,locatario:document.getElementById('dr_locatario').value,domicilio:document.getElementById('dr_domicilio').value,inicio:document.getElementById('dr_inicio').value,fin:document.getElementById('dr_fin').value,anos:document.getElementById('dr_anos').value,meses:document.getElementById('dr_meses').value,tipo_ajuste:_taEl?_taEl.value:'',alquiler:document.getElementById('dr_alquiler').value,gastos:document.getElementById('dr_gastos').value,honorarios:document.getElementById('dr_honorarios').value,sellado:document.getElementById('dr_sellado').value,averig:document.getElementById('dr_averig').value};
+  const doc={id:currentId||Date.now(),carpeta,prop_id:_propId,locatario:document.getElementById('dr_locatario').value,domicilio:document.getElementById('dr_domicilio').value,inicio:document.getElementById('dr_inicio').value,fin:document.getElementById('dr_fin').value,anos:document.getElementById('dr_anos').value,meses:document.getElementById('dr_meses').value,tipo_ajuste:_taEl?_taEl.value:'',alquiler:document.getElementById('dr_alquiler').value,gastos:document.getElementById('dr_gastos').value,honorarios:document.getElementById('dr_honorarios').value,sellado:document.getElementById('dr_sellado').value,averig:document.getElementById('dr_averig').value,_updatedAt:nowTS()};
   const alq=parseFloat(doc.alquiler)||0; const gas=parseFloat(doc.gastos)||0; const hon=parseFloat(doc.honorarios)||0; const sel=parseFloat(doc.sellado)||0; const avr=parseFloat(doc.averig)||0;
   doc.total=alq+gas+hon+sel+avr;
   if(currentId) { const idx=data.findIndex(x=>String(x.id)===String(currentId)); if(idx>=0) data[idx]=doc; }
@@ -6818,7 +6876,7 @@ function renderAjustes() {
 }
 
 function renderDocAjuste() {
-  const data = getData('docajuste_data');
+  const data = visibles(getData('docajuste_data'));
 
   // Poblar filtro de meses — usando campo "mes_aplica" o extraer de "desde"
   const selMes = document.getElementById('docajuste-filter-mes');
@@ -7053,7 +7111,7 @@ function saveDocAjuste() {
   const carpeta=document.getElementById('da_carpeta').value; if(!carpeta) { showToast('Carpeta requerida','error'); return; }
   const _hastaVal = document.getElementById('da_hasta').value;
   const _proxActVal = document.getElementById('da_prox_act').value || _hastaVal;
-  const doc={id:currentId||Date.now(),carpeta,locatario:document.getElementById('da_locatario').value,domicilio:document.getElementById('da_domicilio').value,fecha_inicio:document.getElementById('da_fecha_inicio').value,indice:document.getElementById('da_indice').value,desde:document.getElementById('da_desde').value,hasta:_hastaVal,alq_actual:document.getElementById('da_alq_actual').value,porcentaje:document.getElementById('da_porcentaje').value,alq_nuevo:document.getElementById('da_alq_nuevo').value,gastos:document.getElementById('da_gastos').value,mes_aplica:document.getElementById('da_mes_aplica').value,prox_act:_proxActVal};
+  const doc={id:currentId||Date.now(),carpeta,locatario:document.getElementById('da_locatario').value,domicilio:document.getElementById('da_domicilio').value,fecha_inicio:document.getElementById('da_fecha_inicio').value,indice:document.getElementById('da_indice').value,desde:document.getElementById('da_desde').value,hasta:_hastaVal,alq_actual:document.getElementById('da_alq_actual').value,porcentaje:document.getElementById('da_porcentaje').value,alq_nuevo:document.getElementById('da_alq_nuevo').value,gastos:document.getElementById('da_gastos').value,mes_aplica:document.getElementById('da_mes_aplica').value,prox_act:_proxActVal,_updatedAt:nowTS()};
   doc.total=(parseFloat(doc.alq_nuevo)||0)+(parseFloat(doc.gastos)||0);
   
   // === SINCRONIZAR PROPIEDAD ===
@@ -7189,7 +7247,7 @@ function arregloEstadoBadge(estado) {
   return `<span style="display:inline-block;background:${c.bg};color:${c.fg};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;padding:2px 7px;border-radius:9px;white-space:nowrap">${c.label}</span>${detalleHtml}`;
 }
 function renderArreglos() {
-  const all = getData('arreglos_data');
+  const all = visibles(getData('arreglos_data'));
   const q = (document.getElementById('search-arreglo')?.value || '').toLowerCase().trim();
   const estadoFiltro = document.getElementById('filter-arreglo-estado')?.value || '';
   let filtered = all.filter(a => {
@@ -7276,7 +7334,8 @@ function saveArreglo() {
     presupuesto: get('ar_presupuesto'),
     fecha_revision: get('ar_fecha_revision'),
     observaciones: get('ar_observaciones'),
-    estado: get('ar_estado')
+    estado: get('ar_estado'),
+    _updatedAt: nowTS()
   };
   if (currentId) {
     const idx = all.findIndex(x => String(x.id) === String(currentId));
@@ -7292,7 +7351,7 @@ function saveArreglo() {
 
 function deleteReciboDesdeListado(id) {
   if (!confirm('¿Seguro que querés eliminar este recibo? Esta acción no se puede deshacer.')) return;
-  setData('recibo_data', getData('recibo_data').filter(x => String(x.id) !== String(id)));
+  deleteRecord('recibo_data', id);
   renderRecibos();
   showToast('Recibo eliminado');
 }
@@ -7303,7 +7362,16 @@ function deleteRec(type) {
   const modalMap={propiedad:'modal-propiedad',propietario:'modal-propietario',inquilino:'modal-inquilino',recibo:'modal-recibo',contrato:'modal-contrato',docrenov:'modal-doc-renov',docajuste:'modal-doc-ajuste',arreglo:'modal-arreglo'};
   const renderMap={propiedad:renderPropiedades,propietario:renderPropietarios,inquilino:renderInquilinos,recibo:renderRecibos,contrato:renderContratos,docrenov:renderDocRenov,docajuste:renderDocAjuste,arreglo:renderArreglos};
   const key=keyMap[type];
-  setData(key,getData(key).filter(x=>String(x.id)!==String(currentId)));
+  // Para las colecciones que se sincronizan como array plano (fusión por id
+  // en el servidor), usamos borrado suave para no perder el borrado si la
+  // otra PC guarda con una copia vieja. Propiedad/Propietario/Inquilino ya
+  // tienen su propio mecanismo de borrado (prop_deleted, etc.) y siguen igual.
+  const BORRADO_SUAVE = ['recibo','contrato','docrenov','docajuste','ficha-venta','ficha-alquiler','arreglo'];
+  if (BORRADO_SUAVE.includes(type)) {
+    deleteRecord(key, currentId);
+  } else {
+    setData(key,getData(key).filter(x=>String(x.id)!==String(currentId)));
+  }
   closeModal(modalMap[type]); renderMap[type](); showToast('Registro eliminado');
 }
 
@@ -7461,7 +7529,7 @@ if(document.readyState !== 'loading') {
 // FICHAS DE VENTA
 // ============================================================
 function renderFichasVenta() {
-  const data = JSON.parse(localStorage.getItem('fichas_venta_data') || '[]');
+  const data = visibles(JSON.parse(localStorage.getItem('fichas_venta_data') || '[]'));
   const q = (document.getElementById('search-fv')?.value || '').toLowerCase();
   const filtered = q ? data.filter(f => (f.direccion||'').toLowerCase().includes(q)) : data;
   document.getElementById('fv-count-info').textContent = filtered.length + ' ficha(s)';
@@ -7520,7 +7588,8 @@ function saveFichaVenta() {
     m2_cubierta: document.getElementById('fv_m2_cubierta').value,
     m2_semicubierta: document.getElementById('fv_m2_semicubierta').value,
     m2_total: document.getElementById('fv_m2_total').value,
-    obs: document.getElementById('fv_obs').value
+    obs: document.getElementById('fv_obs').value,
+    _updatedAt: nowTS()
   };
   if(!f.direccion) { showToast('La dirección es requerida', 'error'); return; }
   if(currentId) { const idx=data.findIndex(x=>String(x.id)===String(currentId)); if(idx>=0) data[idx]=f; }
@@ -7629,7 +7698,7 @@ function calcFichaAlquiler() {
 }
 
 function renderFichasAlquiler() {
-  const data = JSON.parse(localStorage.getItem('fichas_alquiler_data') || '[]');
+  const data = visibles(JSON.parse(localStorage.getItem('fichas_alquiler_data') || '[]'));
   const q = (document.getElementById('search-fa') ? document.getElementById('search-fa').value : '').toLowerCase();
   const filtered = q ? data.filter(function(f){ return [f.carpeta, f.direccion].join(' ').toLowerCase().includes(q); }) : data;
   document.getElementById('fa-count-info').textContent = filtered.length + ' ficha(s)';
@@ -7735,7 +7804,8 @@ function saveFichaAlquiler() {
     m2_cubierta: document.getElementById('fal_m2_cubierta').value,
     m2_semicubierta: document.getElementById('fal_m2_semicubierta').value,
     m2_total:   document.getElementById('fal_m2_total').value,
-    desc:       document.getElementById('fal_desc').value
+    desc:       document.getElementById('fal_desc').value,
+    _updatedAt: nowTS()
   };
   const data = JSON.parse(localStorage.getItem('fichas_alquiler_data') || '[]');
   if(currentId) { const idx = data.findIndex(x => String(x.id) === String(currentId)); if(idx>=0) data[idx]=f; }
@@ -8075,8 +8145,44 @@ function enterLocalMode() {
 window._pendingSaves = 0;
 window._failedSaves = [];
 
+// ============================================================
+// INDICADOR VISUAL DE GUARDADO (arriba a la derecha)
+// - Gris "Guardando..." mientras hay algo en camino al servidor.
+// - Verde "✓ Guardado" apenas el servidor confirma: ahí sí es seguro cerrar.
+// - Rojo "⚠ No se pudo guardar" si falla definitivamente (queda visible,
+//   no se oculta solo, para no arriesgarse a que no se note).
+// ============================================================
+let _syncBadgeHideTimer = null;
+function _actualizarBadgeGuardado(estado) {
+  const badge = document.getElementById('sync-status-badge');
+  const dot   = document.getElementById('sync-status-dot');
+  const text  = document.getElementById('sync-status-text');
+  if (!badge) return;
+  clearTimeout(_syncBadgeHideTimer);
+  badge.style.display = 'flex';
+  if (estado === 'guardando') {
+    badge.style.background = '#fff8e1'; badge.style.color = '#8a6d00';
+    dot.style.background = '#e8b800';
+    text.textContent = 'Guardando...';
+  } else if (estado === 'guardado') {
+    badge.style.background = '#e6f7ec'; badge.style.color = '#1e7e42';
+    dot.style.background = '#27ae60';
+    text.textContent = '✓ Guardado';
+    // Se oculta solo a los 3s (ya cumplió su función: avisar que es seguro cerrar)
+    _syncBadgeHideTimer = setTimeout(() => { badge.style.display = 'none'; }, 3000);
+  } else if (estado === 'error') {
+    badge.style.background = '#fdecea'; badge.style.color = '#b3261e';
+    dot.style.background = '#e74c3c';
+    text.textContent = '⚠ No se pudo guardar — no cierres la página';
+    // No se oculta sola: se queda hasta que se resuelva o se recargue.
+  }
+}
+
+window._syncTieneError = false;
+
 async function _postToServer(key, val, attempt) {
   attempt = attempt || 1;
+  if (window._pendingSaves === 0) { window._syncTieneError = false; _actualizarBadgeGuardado('guardando'); }
   window._pendingSaves++;
   // Registrar como pendiente ANTES de intentar mandarlo: así, si se cierra la
   // pestaña a mitad de camino, queda constancia en localStorage y se reintenta
@@ -8090,6 +8196,17 @@ async function _postToServer(key, val, attempt) {
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     _clearPending(key); // confirmado en el servidor: ya no hace falta reintentar
+    // El servidor puede haber FUSIONADO nuestro guardado con registros que la
+    // otra PC había guardado mientras tanto (ver /api/set). Si el resultado
+    // final es distinto a lo que mandamos, actualizamos nuestra copia local
+    // para no perder esos registros (sin volver a mandarlos al servidor).
+    try {
+      const data = await res.json();
+      if (data && data.value !== undefined && JSON.stringify(data.value) !== JSON.stringify(val)) {
+        _setDataOrig(key, data.value);
+        if (typeof onDatosFusionadosDesdeServidor === 'function') onDatosFusionadosDesdeServidor(key);
+      }
+    } catch (e2) { /* no crítico: si falla la lectura del resultado fusionado, no rompe el guardado */ }
   } catch (e) {
     if (attempt < 8) {
       // Reintentar con espera creciente (el servidor puede estar "despertando", tarda hasta ~50s;
@@ -8099,6 +8216,8 @@ async function _postToServer(key, val, attempt) {
       return _postToServer(key, val, attempt + 1);
     }
     window._failedSaves.push({ key, fecha: new Date().toISOString() });
+    window._syncTieneError = true;
+    _actualizarBadgeGuardado('error');
     if (typeof showToast === 'function') {
       showToast('⚠️ No se pudo guardar "' + key + '" en el servidor. Se reintentará solo al volver a abrir la web — no borres los datos del navegador mientras tanto.', 'error');
     }
@@ -8106,6 +8225,9 @@ async function _postToServer(key, val, attempt) {
     // OJO: se deja en la cola (_markPending ya la registró) para reintentar en el próximo loadAllFromServer().
   } finally {
     window._pendingSaves--;
+    if (window._pendingSaves === 0 && !window._syncTieneError) {
+      _actualizarBadgeGuardado('guardado');
+    }
   }
 }
 
@@ -8380,7 +8502,7 @@ function limpiarFiltrosCaja() {
 
 function renderCaja() {
   initFiltroCajaAnio();
-  const data = getData('caja_data') || [];
+  const data = visibles(getData('caja_data')) || [];
   const q = (document.getElementById('search-caja').value||'').toLowerCase();
   const fecha = document.getElementById('filter-caja-fecha').value;
   const mesFiltro = document.getElementById('filter-caja-mes')?.value || '';
@@ -8470,7 +8592,8 @@ function saveMovimiento() {
     concepto: document.getElementById('mov_concepto').value,
     carpeta: document.getElementById('mov_carpeta').value,
     monto: document.getElementById('mov_monto').value,
-    obs: document.getElementById('mov_obs').value
+    obs: document.getElementById('mov_obs').value,
+    _updatedAt: nowTS()
   };
   if(!mov.concepto||!mov.monto){alert('Complet\u00e1 concepto y monto');return;}
   const data = getData('caja_data')||[];
@@ -8483,8 +8606,7 @@ function saveMovimiento() {
 
 function deleteMovimiento() {
   if(!currentMovId||!confirm('\u00bfEliminar este movimiento?')) return;
-  const data=(getData('caja_data')||[]).filter(x=>String(x.id)!==String(currentMovId));
-  setData('caja_data',data);
+  deleteRecord('caja_data', currentMovId);
   closeModal('modal-movimiento');
   renderCaja();
 }
@@ -8506,7 +8628,7 @@ function ejecutarCierreDia() {
   const medioSel = document.getElementById('cierre-medio-input')?.value || '';
   // fecha ya está en el mismo modal
 
-  const data = (getData('caja_data')||[]).filter(m => m.fecha === fecha && (!medioSel || (m.medio||'Efectivo') === medioSel));
+  const data = visibles(getData('caja_data')||[]).filter(m => m.fecha === fecha && (!medioSel || (m.medio||'Efectivo') === medioSel));
   const ingresos = data.filter(m => m.tipo === 'ingreso');
   const egresos  = data.filter(m => m.tipo === 'egreso');
   const totalIng = ingresos.reduce((s,m) => s+(parseFloat(m.monto)||0), 0);
@@ -8550,7 +8672,7 @@ function renderBalance() {
   const mes = parseInt(document.getElementById('filter-balance-mes').value);
   const anio = parseInt(document.getElementById('filter-balance-anio').value);
   if(!anio) return;
-  const data = (getData('caja_data')||[]).filter(m=>{
+  const data = visibles(getData('caja_data')||[]).filter(m=>{
     const d=new Date(m.fecha+'T00:00:00');
     return d.getMonth()===mes && d.getFullYear()===anio;
   });
@@ -8609,7 +8731,7 @@ function renderNumeracion() {
   const MESES_ABREV = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
   const props = getData('prop_data').filter(p => p.carpeta && p.direccion);
-  const cocheras = getData('cochera_data').filter(c => c.carpeta);
+  const cocheras = visibles(getData('cochera_data')).filter(c => c.carpeta);
 
   const filtered = !q ? props : props.filter(p =>
     String(p.carpeta).toLowerCase().includes(q) ||
@@ -9366,7 +9488,8 @@ function saveAjusteProp() {
     alquiler: document.getElementById('ap_alquiler').value,
     gastos: document.getElementById('ap_gastos').value,
     total: (parseFloat(document.getElementById('ap_alquiler').value)||0)
-          +(parseFloat(document.getElementById('ap_gastos').value)||0)
+          +(parseFloat(document.getElementById('ap_gastos').value)||0),
+    _updatedAt: nowTS()
   };
   const data = getData('ajprop_data');
   if(ajpropCurrentId) {
@@ -9395,7 +9518,7 @@ function saveAjusteProp() {
 }
 
 function renderAjusteProp() {
-  const data = getData('ajprop_data');
+  const data = visibles(getData('ajprop_data'));
   const fmt = v => '$ '+(parseFloat(v)||0).toLocaleString('es-AR');
 
   // Poblar filtro de meses (valores únicos)
@@ -9448,8 +9571,7 @@ function getData_ajprop() {
 
 function deleteAjusteProp(id) {
   if(!confirm('¿Eliminar este ajuste proporcional?')) return;
-  const data = getData('ajprop_data').filter(x=>String(x.id)!==String(id));
-  setData('ajprop_data', data);
+  deleteRecord('ajprop_data', id);
   renderAjusteProp();
   showToast('Eliminado');
 }
@@ -10048,7 +10170,7 @@ window.onload = function() {
 
 function renderRecibosLlaves() {
   const q = (document.getElementById('search-llaves')?.value || '').toLowerCase().trim();
-  const all = JSON.parse(localStorage.getItem('recibos_llaves') || '[]');
+  const all = visibles(JSON.parse(localStorage.getItem('recibos_llaves') || '[]'));
 
   const filtered = all.filter(r => {
     if (!q) return true;
@@ -10095,10 +10217,7 @@ function renderRecibosLlaves() {
 
 function eliminarReciboLlaves(id) {
   if (!confirm('¿Eliminar este recibo de llaves?')) return;
-  let arr = JSON.parse(localStorage.getItem('recibos_llaves') || '[]');
-  arr = arr.filter(r => r.id !== id);
-  localStorage.setItem('recibos_llaves', JSON.stringify(arr));
-  setData('recibos_llaves', arr);
+  deleteRecord('recibos_llaves', id);
   renderRecibosLlaves();
   showToast('Recibo eliminado');
 }
