@@ -6428,6 +6428,10 @@ async function _guardarReciboInterno() {
     numero = currentId
       ? ((dataActual.find(r => String(r.id) === String(currentId)) || {}).numero || getNextReciboNum())
       : getNextReciboNum();
+  } else {
+    // Número escrito a mano (nuevo o editado): avisarle al servidor para
+    // que no se lo vuelva a ofrecer a otro recibo automático.
+    reclamarNumeroRecibo(numero);
   }
   const data = getData('recibo_data');
   const recibo = {
@@ -7413,6 +7417,22 @@ function saveArreglo() {
 // Libera en el servidor el número de un recibo borrado, para que el
 // próximo "Nuevo Recibo" de ese mes lo pueda reutilizar (sin dejar
 // saltos). No bloquea el borrado si falla: es una mejora, no algo crítico.
+// "Reclama" en el servidor un número que se escribió A MANO (en vez de
+// pedírselo al sistema automático), para que quede marcado como usado y no
+// se lo vuelva a ofrecer a otro recibo nuevo. No bloquea el guardado si falla.
+function reclamarNumeroRecibo(numero) {
+  if (!numero) return;
+  const m = String(numero).trim().match(/^(\d{4}-\d{2}-)(\d+)$/);
+  if (!m) return; // formato no estándar: no se puede coordinar con el contador automático
+  const prefix = m[1];
+  const number = parseInt(m[2], 10);
+  fetch(SERVER_URL + '/api/claim-number', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefix, number })
+  }).catch(e => console.warn('No se pudo reclamar el n\u00famero de recibo:', e));
+}
+
 function liberarNumeroRecibo(numero) {
   if (!numero) return;
   const m = String(numero).trim().match(/^(\d{4}-\d{2}-)(\d+)$/);

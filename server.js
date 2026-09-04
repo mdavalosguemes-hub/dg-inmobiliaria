@@ -237,6 +237,25 @@ app.get('/api/debug-counter', async (req, res) => {
   });
 });
 
+// "Reclama" un número que se escribió a mano (en vez de pedírselo al
+// servidor con /api/next-number): lo saca de la bolsa de liberados si
+// estaba ahí (para que no se lo vuelva a ofrecer a otro recibo), y sube el
+// contador si hace falta, para que el próximo automático siga desde ahí.
+app.post('/api/claim-number', async (req, res) => {
+  const { prefix, number } = req.body || {};
+  if (!prefix || !Number.isInteger(number)) {
+    return res.status(400).json({ ok: false, error: 'Faltan prefix/number' });
+  }
+  const key = 'recibo:' + prefix;
+  await pool.query('DELETE FROM released_numbers WHERE key = $1 AND number = $2', [key, number]);
+  await pool.query(
+    `INSERT INTO counters (key, value) VALUES ($1, $2)
+     ON CONFLICT (key) DO UPDATE SET value = GREATEST(counters.value, $2)`,
+    [key, number]
+  );
+  res.json({ ok: true });
+});
+
 app.post('/api/set', async (req, res) => {
   const { key, value } = req.body || {};
   if (!key) return res.status(400).json({ ok: false, error: 'Falta key' });
