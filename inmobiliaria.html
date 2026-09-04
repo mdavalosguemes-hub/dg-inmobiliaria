@@ -4992,7 +4992,7 @@ function nuevaLiquidacionCompleta(grupoId) {
 
   // Botón agregar fila
   container.insertAdjacentHTML('beforeend', `
-    <button class="btn btn-secondary btn-sm" style="margin-top:4px" onclick="liqAgregarFila()">+ Agregar propiedad</button>
+    <button class="btn btn-secondary btn-sm" id="liq-btn-agregar-fila" style="margin-top:4px" onclick="liqAgregarFila()">+ Agregar propiedad</button>
   `);
   openModal('modal-liquidacion');
 }
@@ -5036,7 +5036,7 @@ function editLiquidacionGrupo(grupoId) {
   });
 
   container.insertAdjacentHTML('beforeend',
-    `<button class="btn btn-secondary btn-sm" style="margin-top:4px" onclick="liqAgregarFila()">+ Agregar propiedad</button>`
+    `<button class="btn btn-secondary btn-sm" id="liq-btn-agregar-fila" style="margin-top:4px" onclick="liqAgregarFila()">+ Agregar propiedad</button>`
   );
   openModal('modal-liquidacion');
 }
@@ -5044,7 +5044,7 @@ function editLiquidacionGrupo(grupoId) {
 
 function liqAgregarFila() {
   const container = document.getElementById('liq-filas-container');
-  const addBtn = container.querySelector('button');
+  const addBtn = document.getElementById('liq-btn-agregar-fila');
   const idx = Date.now();
   liqFilaIds.push(idx);
   const html = liqMakeFilaHTML(idx, null);
