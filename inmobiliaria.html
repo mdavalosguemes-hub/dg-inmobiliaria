@@ -1895,7 +1895,7 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-recibo')">Cancelar</button>
       <button class="btn btn-danger btn-sm" id="btn-del-recibo" onclick="deleteRec('recibo')" style="display:none">Eliminar</button>
-      <button class="btn btn-primary" onclick="saveRecibo()">Guardar Recibo</button>
+      <button class="btn btn-primary" id="btn-guardar-recibo" onclick="saveRecibo()">Guardar Recibo</button>
     </div>
   </div>
 </div>
@@ -6385,7 +6385,20 @@ function editRecibo(id) {
   calcTotal(); openModal('modal-recibo');
 }
 
+let _guardandoRecibo = false;
 async function saveRecibo() {
+  if (_guardandoRecibo) return; // evita doble guardado por doble clic mientras se está procesando
+  _guardandoRecibo = true;
+  const btnGuardar = document.getElementById('btn-guardar-recibo');
+  if (btnGuardar) { btnGuardar.disabled = true; btnGuardar.textContent = 'Guardando...'; }
+  try {
+    await _guardarReciboInterno();
+  } finally {
+    _guardandoRecibo = false;
+    if (btnGuardar) { btnGuardar.disabled = false; btnGuardar.textContent = 'Guardar Recibo'; }
+  }
+}
+async function _guardarReciboInterno() {
   const carpeta = document.getElementById('r_carpeta').value;
   const locatario = document.getElementById('r_locatario').value;
   if (!carpeta || !locatario) { showToast('Carpeta y locatario requeridos', 'error'); return; }
@@ -8792,7 +8805,7 @@ function renderNumeracion() {
   );
 
   // Construir mapa: carpeta → mes(0-11) → número de recibo (por período)
-  const recibos = getData('recibo_data');
+  const recibos = visibles(getData('recibo_data'));
   const mapaRecibos = {};
   recibos.forEach(r => {
     const c = String(r.carpeta || '').trim();
@@ -8889,7 +8902,7 @@ function exportNumeracionXLSX() {
   const anio = parseInt(document.getElementById('num-anio').value) || new Date().getFullYear();
   const MESES_FULL = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
   const props = getData('prop_data').filter(p => p.carpeta && p.direccion);
-  const recibos = getData('recibo_data');
+  const recibos = visibles(getData('recibo_data'));
 
   const mapaRecibos = {};
   recibos.forEach(r => {
