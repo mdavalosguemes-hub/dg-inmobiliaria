@@ -5961,7 +5961,7 @@ function getReciboPrefixYSeed(fechaOPeriodo) {
   }
   const mm = String(month + 1).padStart(2, '0');
   const prefix = `${year}-${mm}-`;
-  const recibos = getData('recibo_data');
+  const recibos = visibles(getData('recibo_data'));
   const nums = recibos
     .filter(r => r.numero && r.numero.startsWith(prefix))
     .map(r => parseInt(r.numero.slice(prefix.length)) || 0);

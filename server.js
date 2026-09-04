@@ -220,6 +220,23 @@ app.post('/api/release-number', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Diagnóstico: ver el estado real del contador y la bolsa de liberados para
+// un prefijo (ej. GET /api/debug-counter?prefix=2026-09-), sin tocar nada.
+app.get('/api/debug-counter', async (req, res) => {
+  const { prefix } = req.query;
+  if (!prefix) return res.status(400).json({ ok: false, error: 'Falta prefix' });
+  const key = 'recibo:' + prefix;
+  const { rows: c } = await pool.query('SELECT value FROM counters WHERE key = $1', [key]);
+  const { rows: r } = await pool.query('SELECT number FROM released_numbers WHERE key = $1 ORDER BY number', [key]);
+  res.json({
+    ok: true,
+    key,
+    contador_actual: c[0] ? c[0].value : null,
+    proximo_si_no_hay_liberados: c[0] ? c[0].value + 1 : 1,
+    liberados_disponibles: r.map(x => x.number)
+  });
+});
+
 app.post('/api/set', async (req, res) => {
   const { key, value } = req.body || {};
   if (!key) return res.status(400).json({ ok: false, error: 'Falta key' });
