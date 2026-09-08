@@ -152,6 +152,20 @@ function fusionarPorId(existentes, entrantes) {
   return Array.from(mapa.values());
 }
 
+// Fusión profunda GENÉRICA para otros objetos anidados tipo diccionario que
+// también corrían el mismo riesgo (ej. prop_overrides/owner_overrides/
+// tenant_overrides: id -> {campos de esa propiedad/propietario/inquilino}).
+// Cualquier id que ya existía y no vino en este guardado se conserva.
+function fusionarObjetoProfundo(existente, entrante) {
+  if (!esObjetoPlano(entrante)) return entrante; // valor final (numero/texto/etc): gana el entrante
+  const base = esObjetoPlano(existente) ? existente : {};
+  const resultado = Object.assign({}, base);
+  for (const [k, v] of Object.entries(entrante)) {
+    resultado[k] = fusionarObjetoProfundo(base[k], v);
+  }
+  return resultado;
+}
+
 // ============================================================
 // NUMERACIÓN ATÓMICA (ej. números de recibo por mes)
 // Antes: cada PC calculaba "el próximo número" mirando su propia copia de
@@ -301,6 +315,7 @@ app.post('/api/set', async (req, res) => {
   if (!key) return res.status(400).json({ ok: false, error: 'Falta key' });
 
   let valorFinal = value;
+  const CLAVES_OBJETO_FUSIONABLE = ['prop_overrides', 'owner_overrides', 'tenant_overrides'];
   if (esColeccionFusionable(value)) {
     const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
     const existentes = Array.isArray(rows[0] && rows[0].value) ? rows[0].value : [];
@@ -309,6 +324,10 @@ app.post('/api/set', async (req, res) => {
     const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
     const existente = esObjetoPlano(rows[0] && rows[0].value) ? rows[0].value : {};
     valorFinal = fusionarValoresHistoricos(existente, value);
+  } else if (CLAVES_OBJETO_FUSIONABLE.includes(key) && esObjetoPlano(value)) {
+    const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
+    const existente = esObjetoPlano(rows[0] && rows[0].value) ? rows[0].value : {};
+    valorFinal = fusionarObjetoProfundo(existente, value);
   }
 
   await pool.query(

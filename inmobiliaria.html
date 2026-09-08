@@ -2646,6 +2646,33 @@ function migrarValoresHistoricosSeedTodosV2() {
   localStorage.setItem(FLAG, '1');
 }
 
+// Restauración de emergencia: "valores_historicos" se guardaba pisando todo
+// entero (sin fusión, a diferencia de recibos/liquidaciones/etc.), y quedó
+// en blanco en el servidor por ese motivo. Ya se corrigió esa fusión del
+// lado del servidor (ver server.js), así que esta migración es segura:
+// vuelve a completar todo desde el mismo snapshot ya verificado celda por
+// celda contra el Excel, con una bandera NUEVA (corre aunque la v1/v2 ya
+// estén marcadas como hechas en este navegador).
+function migrarValoresHistoricosRestauracionV3() {
+  const FLAG = 'valores_historicos_restauracion_v3_done';
+  if (localStorage.getItem(FLAG) === '1') return;
+  const all = getValoresHistoricos();
+  let completados = 0;
+  Object.entries(VALORES_HISTORICOS_SEED_TODOS).forEach(([carpeta, info]) => {
+    if (!all[carpeta]) all[carpeta] = {};
+    if (!all[carpeta][info.anio]) all[carpeta][info.anio] = {};
+    Object.entries(info.meses).forEach(([mes, valor]) => {
+      const actual = all[carpeta][info.anio][mes];
+      if (actual === undefined || actual === null || actual === '') {
+        all[carpeta][info.anio][mes] = valor;
+        completados++;
+      }
+    });
+  });
+  if (completados > 0) setData('valores_historicos', all);
+  localStorage.setItem(FLAG, '1');
+}
+
 function migrarValoresHistoricosSeedExcel() {
   const FLAG = 'valores_historicos_seed_excel_v1_done';
   if (localStorage.getItem(FLAG) === '1') return;
@@ -7731,6 +7758,7 @@ async function iniciarApp() {
   migrarValoresHistoricosSeedExcel();
   migrarValoresHistoricosSeedTodos();
   migrarValoresHistoricosSeedTodosV2();
+  migrarValoresHistoricosRestauracionV3();
   migrarCorreccionFechaInicioV1();
   sincronizarAlquileresConMesActual();
   // Recién ahora, con los datos reales del servidor ya en el navegador, se
