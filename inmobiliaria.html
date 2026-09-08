@@ -4921,54 +4921,54 @@ function liqMakeFilaHTML(idx, prop) {
   const carp = prop ? (prop.carpeta||'') : '';
   const dir  = prop ? (prop.direccion||'') : '';
   return `
-    <div class="liq-fila" id="liq-fila-${idx}" style="border:1px solid #d8e4f0;border-radius:8px;padding:14px;margin-bottom:12px;background:#fafcff">
+    <div class="liq-fila" id="liq-fila-${idx}" style="border:1px solid #d8e4f0;border-radius:8px;padding:14px;margin-bottom:12px;background:#fafcff;min-width:0;overflow:hidden">
       <!-- Fila 1: Carpeta / Dirección / Período / Alquiler / Comisión / X -->
-      <div style="display:grid;grid-template-columns:80px 1fr 130px 130px 130px auto;gap:8px;align-items:end">
-        <div class="form-group" style="margin:0">
+      <div style="display:grid;grid-template-columns:80px minmax(0,1fr) 130px 130px 130px auto;gap:8px;align-items:end">
+        <div class="form-group" style="margin:0;min-width:0">
           <label style="font-size:10px">Carpeta</label>
-          <input type="text" class="form-control" id="lf_carp_${idx}" value="${carp}" style="font-weight:700;text-align:center">
+          <input type="text" class="form-control" id="lf_carp_${idx}" value="${carp}" style="font-weight:700;text-align:center;width:100%;box-sizing:border-box">
         </div>
-        <div class="form-group" style="margin:0">
+        <div class="form-group" style="margin:0;min-width:0">
           <label style="font-size:10px">Dirección</label>
-          <input type="text" class="form-control" id="lf_dir_${idx}" value="${dir}">
+          <input type="text" class="form-control" id="lf_dir_${idx}" value="${dir}" style="width:100%;box-sizing:border-box">
         </div>
-        <div class="form-group" style="margin:0">
+        <div class="form-group" style="margin:0;min-width:0">
           <label style="font-size:10px">Período (este prop.)</label>
-          <input type="text" class="form-control" id="lf_per_${idx}" value="${liqPeriodoGlobalAMMYY(document.getElementById('liq_periodo_global')?.value)}" placeholder="Ej: 09/26" style="font-size:12px">
+          <input type="text" class="form-control" id="lf_per_${idx}" value="${liqPeriodoGlobalAMMYY(document.getElementById('liq_periodo_global')?.value)}" placeholder="Ej: 09/26" style="font-size:12px;width:100%;box-sizing:border-box">
         </div>
-        <div class="form-group" style="margin:0">
+        <div class="form-group" style="margin:0;min-width:0">
           <label style="font-size:10px">Alquiler $</label>
-          <input type="number" class="form-control" id="lf_alq_${idx}" value="${alq}" oninput="calcFilaLiq(${idx})">
+          <input type="number" class="form-control" id="lf_alq_${idx}" value="${alq}" oninput="calcFilaLiq(${idx})" style="width:100%;box-sizing:border-box">
         </div>
-        <div class="form-group" style="margin:0">
+        <div class="form-group" style="margin:0;min-width:0">
           <label style="font-size:10px">Comisión $</label>
-          <input type="number" class="form-control" id="lf_com_${idx}" value="${com}" oninput="calcFilaLiq(${idx})">
+          <input type="number" class="form-control" id="lf_com_${idx}" value="${com}" oninput="calcFilaLiq(${idx})" style="width:100%;box-sizing:border-box">
         </div>
         <button class="btn btn-danger btn-sm" onclick="liqQuitarFila(${idx})" title="Quitar" style="margin-bottom:2px">✕</button>
       </div>
       <!-- Fila 2: Impuestos/Arreglos (fijo) + 6 extras suma/resta -->
-      <div style="margin-top:10px;display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:start">
-        <div class="form-group" style="margin:0">
+      <div style="margin-top:10px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:10px;align-items:start">
+        <div class="form-group" style="margin:0;min-width:0">
           <label style="font-size:10px">Impuestos/Arreglos $</label>
-          <input type="number" class="form-control" id="lf_imp_${idx}" placeholder="0" oninput="calcFilaLiq(${idx})" style="font-size:12px">
+          <input type="number" class="form-control" id="lf_imp_${idx}" placeholder="0" oninput="calcFilaLiq(${idx})" style="font-size:12px;width:100%;box-sizing:border-box">
           <div style="font-size:9px;color:#888;margin-top:2px">Se descuenta del total</div>
         </div>
-        <div>
+        <div style="min-width:0">
           <div style="font-size:10px;font-weight:600;color:#888;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Extras</div>
-          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:5px">
+          <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px">
             ${Array.from({length:6},(_,ei)=>`
-            <div style="display:grid;grid-template-columns:1fr 100px;gap:3px;align-items:center">
-              <input type="text" class="form-control" id="lf_ed_${idx}_${ei}" placeholder="Descripción" style="font-size:11px" oninput="calcFilaLiq(${idx})">
-              <input type="number" class="form-control" id="lf_em_${idx}_${ei}" placeholder="$ (neg. resta)" style="font-size:11px" oninput="calcFilaLiq(${idx})">
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) 100px;gap:3px;align-items:center">
+              <input type="text" class="form-control" id="lf_ed_${idx}_${ei}" placeholder="Descripción" style="font-size:11px;width:100%;box-sizing:border-box" oninput="calcFilaLiq(${idx})">
+              <input type="number" class="form-control" id="lf_em_${idx}_${ei}" placeholder="$ (neg. resta)" style="font-size:11px;width:100%;box-sizing:border-box" oninput="calcFilaLiq(${idx})">
             </div>`).join('')}
           </div>
         </div>
       </div>
       <!-- Totales de fila -->
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:8px;border-top:1px solid #e2e8f0">
-        <div class="form-group" style="margin:0;min-width:220px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:8px;border-top:1px solid #e2e8f0;flex-wrap:wrap;gap:10px">
+        <div class="form-group" style="margin:0;min-width:220px;flex:1">
           <label style="font-size:10px">Observaciones</label>
-          <input type="text" class="form-control" id="lf_obs_${idx}" style="font-size:12px">
+          <input type="text" class="form-control" id="lf_obs_${idx}" style="font-size:12px;width:100%;box-sizing:border-box">
         </div>
         <div style="text-align:right">
           <div style="font-size:11px;color:#888">Alq. - Comisión</div>
@@ -5053,19 +5053,37 @@ function nuevaLiquidacionCompleta(grupoId) {
 
 function editLiquidacionGrupo(grupoId) {
   const all   = getData('liquidacion_data')||[];
-  const filas = all.filter(l => (l.grupoId||l.id) === grupoId);
+  // Solo las filas VIGENTES de este grupo (excluye las ya marcadas como
+  // eliminadas por una edición anterior). Antes se incluían también las
+  // borradas, y como el formulario no las distinguía de las activas, cada
+  // vez que se guardaba se volvían a crear como filas nuevas -> duplicado
+  // que crecía en cada edición.
+  const filas = visibles(all).filter(l => (l.grupoId||l.id) === grupoId);
   if (!filas.length) return;
+  // Auto-corrección: si ya había filas duplicadas de la misma propiedad
+  // (por el bug de arriba), al editar se colapsan a una sola por propiedad
+  // (se conserva la más reciente según _updatedAt), así que guardar la
+  // liquidación después de esto limpia el duplicado definitivamente.
+  const vistos = new Map();
+  filas.forEach(l => {
+    const key = (l.carpeta && String(l.carpeta).trim())
+      ? 'c:' + String(l.carpeta).trim()
+      : 'd:' + String(l.direccion || '').trim().toLowerCase();
+    const anterior = vistos.get(key);
+    if (!anterior || (l._updatedAt || 0) >= (anterior._updatedAt || 0)) vistos.set(key, l);
+  });
+  const filasDedup = Array.from(vistos.values());
   currentId  = grupoId;
   liqFilaIds = [];
   const container = document.getElementById('liq-filas-container');
   container.innerHTML = '';
-  document.getElementById('liq_propietario_id').value    = filas[0].propietarioId||'';
-  document.getElementById('liq_propietario_nombre').value = filas[0].propietarioNombre||'';
-  document.getElementById('liq_fecha_global').value      = filas[0].fecha||'';
-  document.getElementById('liq_periodo_global').value    = filas[0].periodoGlobal||filas[0].periodo||'';
-  document.getElementById('modal-liq-titulo').textContent = 'Editar · ' + (filas[0].periodoGlobal||filas[0].periodo||'');
+  document.getElementById('liq_propietario_id').value    = filasDedup[0].propietarioId||'';
+  document.getElementById('liq_propietario_nombre').value = filasDedup[0].propietarioNombre||'';
+  document.getElementById('liq_fecha_global').value      = filasDedup[0].fecha||'';
+  document.getElementById('liq_periodo_global').value    = filasDedup[0].periodoGlobal||filasDedup[0].periodo||'';
+  document.getElementById('modal-liq-titulo').textContent = 'Editar · ' + (filasDedup[0].periodoGlobal||filasDedup[0].periodo||'');
 
-  filas.forEach((l, i) => {
+  filasDedup.forEach((l, i) => {
     const idx = Date.now() + i;
     liqFilaIds.push(idx);
     container.insertAdjacentHTML('beforeend', liqMakeFilaHTML(idx, null));
@@ -5179,8 +5197,18 @@ function saveLiquidacionGrupo() {
 
 function printLiquidacionGrupo(grupoId) {
   const all   = getData('liquidacion_data')||[];
-  const filas = all.filter(l => (l.grupoId||l.id) === grupoId);
+  let filas = visibles(all).filter(l => (l.grupoId||l.id) === grupoId);
   if (!filas.length) return;
+  // Misma deduplicación defensiva que en editLiquidacionGrupo, por si esta
+  // liquidación todavía no se volvió a guardar desde que se corrigió el bug.
+  { const vistos = new Map();
+    filas.forEach(l => {
+      const key = (l.carpeta && String(l.carpeta).trim()) ? 'c:'+String(l.carpeta).trim() : 'd:'+String(l.direccion||'').trim().toLowerCase();
+      const anterior = vistos.get(key);
+      if (!anterior || (l._updatedAt||0) >= (anterior._updatedAt||0)) vistos.set(key, l);
+    });
+    filas = Array.from(vistos.values());
+  }
   const fmtM = v => (v!==undefined && v!==null && v!=='') ? '$ ' + parseFloat(v).toLocaleString('es-AR') : '-';
   const propNombre  = filas[0].propietarioNombre||'';
   const periodoG    = filas[0].periodoGlobal||filas[0].periodo||'';
@@ -10051,7 +10079,7 @@ function descargarBackupAhora() {
           </div>
         </div>
         <!-- Filas de propiedades -->
-        <div id="liq-filas-container" style="padding:12px 20px;max-height:55vh;overflow-y:auto"></div>
+        <div id="liq-filas-container" style="padding:12px 20px;max-height:55vh;overflow-y:auto;overflow-x:hidden"></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('modal-liquidacion')">Cancelar</button>
