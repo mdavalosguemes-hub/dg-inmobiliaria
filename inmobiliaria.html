@@ -7672,8 +7672,10 @@ function borrarSesionGuardada() {
   localStorage.removeItem('dg_session');
 }
 
-// Devuelve true si logró restaurar una sesión todavía válida (y ya dejó
-// la app lista para usar); false si no había sesión o ya venció.
+// Devuelve true si la sesión guardada todavía es válida (y deja el usuario
+// "logueado" y la pantalla visible). NO renderiza datos todavía: eso se
+// hace recién en iniciarApp(), después de esperar a que terminen de
+// cargarse los datos reales del servidor (ver comentario más abajo).
 function intentarRestaurarSesion() {
   try {
     const raw = localStorage.getItem('dg_session');
@@ -7688,10 +7690,6 @@ function intentarRestaurarSesion() {
     currentUserData = s.userData;
     updateUserUI();
     hideAuthOverlay();
-    initData();
-    renderPropiedades();
-    updateBadges();
-    initBalanceAnios();
     return true;
   } catch (e) {
     console.warn('No se pudo restaurar la sesi\u00f3n guardada:', e);
@@ -7720,7 +7718,14 @@ setInterval(() => {
 // ============================================================
 initData();
 async function iniciarApp() {
-  if (!intentarRestaurarSesion()) showAuthOverlay();
+  const sesionRestaurada = intentarRestaurarSesion();
+  if (!sesionRestaurada) showAuthOverlay();
+  // IMPORTANTE: siempre se espera a que termine de cargar del servidor
+  // (loadAllFromServer, dentro de initServidorLocal) ANTES de renderizar
+  // nada. Antes, en un refresh con sesión ya guardada, se renderizaba la
+  // app con los datos locales de ese instante (que podían estar
+  // incompletos, por ejemplo sin Valores Históricos todavía) y nunca se
+  // volvía a refrescar la pantalla una vez que llegaban los datos reales.
   await initServidorLocal();
   migrarSelladosSeedInicial();
   migrarValoresHistoricosSeedExcel();
@@ -7728,6 +7733,15 @@ async function iniciarApp() {
   migrarValoresHistoricosSeedTodosV2();
   migrarCorreccionFechaInicioV1();
   sincronizarAlquileresConMesActual();
+  // Recién ahora, con los datos reales del servidor ya en el navegador, se
+  // muestra la app (tanto si la sesión se restauró en este refresh, como
+  // si el usuario acaba de loguearse manualmente en esta misma carga).
+  if (currentUser) {
+    initData();
+    renderPropiedades();
+    updateBadges();
+    initBalanceAnios();
+  }
 }
 // Servidor local (reemplaza Firebase)
 document.addEventListener('DOMContentLoaded', iniciarApp);
