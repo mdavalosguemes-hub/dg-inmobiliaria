@@ -256,6 +256,46 @@ app.post('/api/claim-number', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ============================================================
+// FUSIÓN PROFUNDA para "valores_historicos" (carpeta -> año -> mes -> valor)
+// Esta colección NO es un array con "id", así que no la cubre la fusión de
+// arriba -> hasta ahora se pisaba entera con cada guardado, exactamente
+// como pasaba antes con recibos/liquidaciones. Acá se fusiona celda por
+// celda: si el valor que llega para una celda está vacío/ausente pero el
+// servidor ya tenía uno cargado, se conserva el que ya estaba (nunca se
+// pierde un valor histórico ya cargado solo porque otra PC tenía una copia
+// vieja/incompleta). Si el valor que llega SÍ trae algo, se usa ese
+// (se asume que es una edición real y más reciente).
+// ============================================================
+function esObjetoPlano(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+function esVacio(v) {
+  return v === undefined || v === null || v === '';
+}
+function fusionarValoresHistoricos(existente, entrante) {
+  if (!esObjetoPlano(entrante)) return existente;
+  if (!esObjetoPlano(existente)) return entrante;
+  const resultado = { ...existente };
+  for (const carpeta of Object.keys(entrante)) {
+    const aniosEntrante = entrante[carpeta];
+    if (!esObjetoPlano(aniosEntrante)) continue;
+    resultado[carpeta] = { ...(esObjetoPlano(resultado[carpeta]) ? resultado[carpeta] : {}) };
+    for (const anio of Object.keys(aniosEntrante)) {
+      const mesesEntrante = aniosEntrante[anio];
+      if (!esObjetoPlano(mesesEntrante)) continue;
+      resultado[carpeta][anio] = { ...(esObjetoPlano(resultado[carpeta][anio]) ? resultado[carpeta][anio] : {}) };
+      for (const mes of Object.keys(mesesEntrante)) {
+        const valorEntrante  = mesesEntrante[mes];
+        const valorExistente = resultado[carpeta][anio][mes];
+        if (esVacio(valorEntrante) && !esVacio(valorExistente)) continue; // conservar lo que ya había
+        resultado[carpeta][anio][mes] = valorEntrante;
+      }
+    }
+  }
+  return resultado;
+}
+
 app.post('/api/set', async (req, res) => {
   const { key, value } = req.body || {};
   if (!key) return res.status(400).json({ ok: false, error: 'Falta key' });
@@ -265,6 +305,10 @@ app.post('/api/set', async (req, res) => {
     const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
     const existentes = Array.isArray(rows[0] && rows[0].value) ? rows[0].value : [];
     valorFinal = fusionarPorId(existentes, value);
+  } else if (key === 'valores_historicos') {
+    const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
+    const existente = esObjetoPlano(rows[0] && rows[0].value) ? rows[0].value : {};
+    valorFinal = fusionarValoresHistoricos(existente, value);
   }
 
   await pool.query(

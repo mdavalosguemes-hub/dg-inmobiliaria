@@ -2619,6 +2619,33 @@ function migrarValoresHistoricosSeedTodos() {
   localStorage.setItem(FLAG, '1');
 }
 
+// Segunda pasada de la misma carga verificada (mismos datos, otro "flag").
+// Motivo: antes de que el servidor supiera fusionar "valores_historicos"
+// celda por celda, una PC con la migración v1 ya hecha (pero con datos
+// vencidos en el servidor por haber sido pisados por otra PC) nunca
+// volvía a completar nada. Esta pasada corre una vez más en TODAS las PCs
+// para reparar lo que haya quedado pisado. Sigue siendo 100% segura: solo
+// completa celdas vacías, nunca pisa un valor ya cargado.
+function migrarValoresHistoricosSeedTodosV2() {
+  const FLAG = 'valores_historicos_seed_todos_v2_done';
+  if (localStorage.getItem(FLAG) === '1') return;
+  const all = getValoresHistoricos();
+  let completados = 0;
+  Object.entries(VALORES_HISTORICOS_SEED_TODOS).forEach(([carpeta, info]) => {
+    if (!all[carpeta]) all[carpeta] = {};
+    if (!all[carpeta][info.anio]) all[carpeta][info.anio] = {};
+    Object.entries(info.meses).forEach(([mes, valor]) => {
+      const actual = all[carpeta][info.anio][mes];
+      if (actual === undefined || actual === null || actual === '') {
+        all[carpeta][info.anio][mes] = valor;
+        completados++;
+      }
+    });
+  });
+  if (completados > 0) setData('valores_historicos', all);
+  localStorage.setItem(FLAG, '1');
+}
+
 function migrarValoresHistoricosSeedExcel() {
   const FLAG = 'valores_historicos_seed_excel_v1_done';
   if (localStorage.getItem(FLAG) === '1') return;
@@ -7692,13 +7719,15 @@ setInterval(() => {
 // INIT
 // ============================================================
 initData();
-function iniciarApp() {
+async function iniciarApp() {
   if (!intentarRestaurarSesion()) showAuthOverlay();
-  initServidorLocal();
+  await initServidorLocal();
   migrarSelladosSeedInicial();
   migrarValoresHistoricosSeedExcel();
   migrarValoresHistoricosSeedTodos();
+  migrarValoresHistoricosSeedTodosV2();
   migrarCorreccionFechaInicioV1();
+  sincronizarAlquileresConMesActual();
 }
 // Servidor local (reemplaza Firebase)
 document.addEventListener('DOMContentLoaded', iniciarApp);
@@ -8243,7 +8272,6 @@ async function initServidorLocal() {
     // Servidor disponible: cargar todos los datos
     showAuthLoading('Cargando datos...');
     await loadAllFromServer();
-    sincronizarAlquileresConMesActual();
     
     // Mostrar login normal
     hideAuthLoading();
@@ -8253,7 +8281,6 @@ async function initServidorLocal() {
     console.warn('Servidor no disponible:', e.message);
     // Modo offline: usar localStorage
     usingLocalMode = true;
-    sincronizarAlquileresConMesActual();
     hideAuthLoading();
     showLoginForm();
     showToast('⚠️ Modo sin servidor (datos solo locales)', 'error');
