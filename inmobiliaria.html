@@ -6317,11 +6317,30 @@ function fillReciboFromProp(p) {
   const t = getData('tenant_data').find(x=>String(x.carpeta)===String(p.carpeta));
   if(t) document.getElementById('r_locatario').value = ((t.nombre||'')+' '+(t.apellido||'')).trim();
   else if(p.nombre_inq) document.getElementById('r_locatario').value = ((p.nombre_inq||'')+' '+(p.apellido_inq||'')).trim();
-  // Autocompletar montos
+  // Autocompletar Alquiler desde Valores Históricos del mes correspondiente
+  // (el período del recibo si ya está cargado, si no el mes actual), en vez
+  // del campo fijo "Valor del alquiler actual" de la propiedad (que puede
+  // haber quedado desactualizado). Gastos administrativos se recalcula al
+  // 3% de ese alquiler, igual que en el resto del sistema.
   const alqEl = document.querySelector('[data-concepto="Alquiler"]');
   const gaEl = document.querySelector('[data-concepto="Gastos administrativos"]');
-  if(alqEl && p.alquiler && !isNaN(parseFloat(p.alquiler))) alqEl.value = parseFloat(p.alquiler);
-  if(gaEl && p.gastos && !isNaN(parseFloat(p.gastos))) gaEl.value = parseFloat(p.gastos);
+  const mmYY = reciboPeriodoAMMYY(document.getElementById('r_periodo').value) || '';
+  const [mesStr, anioStr] = mmYY.split('/');
+  const mes = mesStr ? parseInt(mesStr, 10) : (new Date().getMonth()+1);
+  const anio = anioStr ? (2000 + parseInt(anioStr, 10)) : new Date().getFullYear();
+  const valorHistorico = buscarUltimoValorVigente(getValoresHistoricos(), String(p.carpeta), String(anio), String(mes));
+  let alquiler = null;
+  if (valorHistorico !== '' && valorHistorico !== undefined && valorHistorico !== null) {
+    alquiler = parseFloat(valorHistorico) || 0;
+  } else if (p.alquiler && !isNaN(parseFloat(p.alquiler))) {
+    alquiler = parseFloat(p.alquiler); // respaldo: no hay dato histórico cargado para ese mes
+  }
+  if (alqEl && alquiler !== null) {
+    alqEl.value = alquiler;
+    if (gaEl) gaEl.value = Math.ceil((alquiler * 0.03) / 100) * 100;
+  } else if (gaEl && p.gastos && !isNaN(parseFloat(p.gastos))) {
+    gaEl.value = parseFloat(p.gastos);
+  }
   calcPunitorios();
 }
 function clearReciboFields() {
@@ -7605,25 +7624,86 @@ function showToast(msg, type) {
 }
 
 // ============================================================
+// SESIÓN PERSISTENTE (dura ~4 horas, sobrevive a un refresh)
+// Antes: el login vivía solo en una variable de JS, así que CUALQUIER
+// refresh obligaba a volver a ingresar usuario y contraseña. Ahora se
+// guarda en localStorage con la hora de inicio, y se restaura sola en cada
+// carga de la página mientras no hayan pasado 4 horas. Pasadas las 4 horas
+// (o si el usuario cierra sesión a mano), se pide login de nuevo.
+// ============================================================
+const DURACION_SESION_MS = 4 * 60 * 60 * 1000; // 4 horas
+
+function guardarSesion() {
+  localStorage.setItem('dg_session', JSON.stringify({
+    user: currentUser,
+    userData: currentUserData,
+    loginAt: Date.now()
+  }));
+}
+
+function borrarSesionGuardada() {
+  localStorage.removeItem('dg_session');
+}
+
+// Devuelve true si logró restaurar una sesión todavía válida (y ya dejó
+// la app lista para usar); false si no había sesión o ya venció.
+function intentarRestaurarSesion() {
+  try {
+    const raw = localStorage.getItem('dg_session');
+    if (!raw) return false;
+    const s = JSON.parse(raw);
+    if (!s || !s.user || !s.loginAt) return false;
+    if (Date.now() - s.loginAt > DURACION_SESION_MS) {
+      borrarSesionGuardada(); // venció: hay que loguearse de nuevo
+      return false;
+    }
+    currentUser = s.user;
+    currentUserData = s.userData;
+    updateUserUI();
+    hideAuthOverlay();
+    initData();
+    renderPropiedades();
+    updateBadges();
+    initBalanceAnios();
+    return true;
+  } catch (e) {
+    console.warn('No se pudo restaurar la sesi\u00f3n guardada:', e);
+    return false;
+  }
+}
+
+// Revisa cada 5 minutos si la sesión ya venció (por si el usuario deja la
+// pestaña abierta más de 4 horas seguidas sin refrescar).
+setInterval(() => {
+  if (!currentUser) return;
+  const raw = localStorage.getItem('dg_session');
+  if (!raw) return;
+  try {
+    const s = JSON.parse(raw);
+    if (s && s.loginAt && (Date.now() - s.loginAt > DURACION_SESION_MS)) {
+      borrarSesionGuardada();
+      showToast('Tu sesi\u00f3n expir\u00f3 despu\u00e9s de 4 horas. Volv\u00e9 a iniciar sesi\u00f3n.', 'error');
+      doLogout();
+    }
+  } catch (e) {}
+}, 5 * 60 * 1000);
+
+// ============================================================
 // INIT
 // ============================================================
 initData();
+function iniciarApp() {
+  if (!intentarRestaurarSesion()) showAuthOverlay();
+  initServidorLocal();
+  migrarSelladosSeedInicial();
+  migrarValoresHistoricosSeedExcel();
+  migrarValoresHistoricosSeedTodos();
+  migrarCorreccionFechaInicioV1();
+}
 // Servidor local (reemplaza Firebase)
-document.addEventListener('DOMContentLoaded', () => {
-  showAuthOverlay();
-  initServidorLocal();
-  migrarSelladosSeedInicial();
-  migrarValoresHistoricosSeedExcel();
-  migrarValoresHistoricosSeedTodos();
-  migrarCorreccionFechaInicioV1();
-});
+document.addEventListener('DOMContentLoaded', iniciarApp);
 if(document.readyState !== 'loading') {
-  showAuthOverlay();
-  initServidorLocal();
-  migrarSelladosSeedInicial();
-  migrarValoresHistoricosSeedExcel();
-  migrarValoresHistoricosSeedTodos();
-  migrarCorreccionFechaInicioV1();
+  iniciarApp();
 }
 
 
@@ -8115,6 +8195,43 @@ async function loadAllFromServer() {
   return false;
 }
 
+// ============================================================
+// SINCRONIZACIÓN AUTOMÁTICA: Valor alquiler actual <- mes calendario real
+// Cada vez que se abre el sistema (no una sola vez), revisa TODAS las
+// propiedades y actualiza "Valor alquiler actual" (y Comisión/Gastos admin,
+// recalculados con la misma fórmula de siempre) tomando el valor histórico
+// que corresponde al mes/año calendario de HOY (con el mismo criterio de
+// "último valor vigente" que ya usa el resto del sistema). Así no hace
+// falta editar el contrato a mano cuando cambia el mes: el próximo
+// refresh ya lo actualiza solo. Si una propiedad no tiene ningún valor
+// histórico cargado, no se toca (se deja como está).
+// ============================================================
+function sincronizarAlquileresConMesActual() {
+  const hoy = new Date();
+  const mes = hoy.getMonth() + 1, anio = hoy.getFullYear();
+  const valoresHist = getValoresHistoricos();
+  const data = getData('prop_data');
+  let cambios = 0;
+  data.forEach(p => {
+    if (!p.carpeta || p.carpeta === '-') return;
+    const valor = buscarUltimoValorVigente(valoresHist, String(p.carpeta), String(anio), String(mes));
+    if (valor === '' || valor === undefined || valor === null) return; // sin historial: no se toca
+    const alquiler = parseFloat(valor) || 0;
+    if (String(p.alquiler || '') !== String(alquiler)) {
+      p.alquiler  = String(alquiler);
+      p.comision  = String(Math.ceil((alquiler * 0.08) / 100) * 100);
+      p.gastos    = String(Math.ceil((alquiler * 0.03) / 100) * 100);
+      cambios++;
+    }
+  });
+  if (cambios > 0) {
+    setData('prop_data', data);
+    const pagPropiedades = document.getElementById('page-propiedades');
+    if (pagPropiedades && pagPropiedades.classList.contains('active')) renderPropiedades();
+  }
+  return cambios;
+}
+
 async function initServidorLocal() {
   showAuthLoading('Conectando con el servidor...');
   
@@ -8126,6 +8243,7 @@ async function initServidorLocal() {
     // Servidor disponible: cargar todos los datos
     showAuthLoading('Cargando datos...');
     await loadAllFromServer();
+    sincronizarAlquileresConMesActual();
     
     // Mostrar login normal
     hideAuthLoading();
@@ -8135,6 +8253,7 @@ async function initServidorLocal() {
     console.warn('Servidor no disponible:', e.message);
     // Modo offline: usar localStorage
     usingLocalMode = true;
+    sincronizarAlquileresConMesActual();
     hideAuthLoading();
     showLoginForm();
     showToast('⚠️ Modo sin servidor (datos solo locales)', 'error');
@@ -8178,6 +8297,7 @@ async function doLogin() {
     }
     
     updateUserUI();
+    guardarSesion();
     hideAuthOverlay();
     initData();
     renderPropiedades();
@@ -8225,6 +8345,7 @@ async function doRegister() {
 async function doLogout() {
   currentUser = null;
   currentUserData = null;
+  borrarSesionGuardada();
   showAuthOverlay();
   showLoginForm();
 }
