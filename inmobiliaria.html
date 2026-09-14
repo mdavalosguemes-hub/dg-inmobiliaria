@@ -1701,10 +1701,14 @@
       </div>
       <div id="tab-owner-propiedades" class="tab-pane">
         <div class="form-section">
-          <div class="form-section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="form-section-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
             Propiedades asignadas
-            <button class="btn btn-primary btn-sm" onclick="nuevaPropDesdeOwner()" style="font-size:11px">+ Nueva propiedad</button>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-secondary btn-sm" onclick="mostrarSelectorPropExistente()" style="font-size:11px">🔗 Asignar propiedad existente</button>
+              <button class="btn btn-primary btn-sm" onclick="nuevaPropDesdeOwner()" style="font-size:11px">+ Nueva propiedad</button>
+            </div>
           </div>
+          <div id="owner-selector-existente" style="display:none;margin-bottom:12px"></div>
           <div id="owner-props-selector" style="margin-bottom:12px"></div>
           <div id="owner-props-detail" style="background:var(--bg-subtle);border-radius:8px;padding:16px"></div>
         </div>
@@ -2243,7 +2247,11 @@ function getData(key) {
       const id = 'p_' + i;
       return Object.assign({}, p, {id}, overrides[id] || {});
     }).filter(p => !deleted.has(String(p.id)));
-    return base.concat(additions);
+    // Las "adiciones" (propiedades cargadas después, con id propio) se
+    // borran con el mismo criterio de borrado suave que recibos/liquidaciones
+    // (_deleted), para que la eliminación se sincronice de verdad con el
+    // servidor y no "reviva" al fusionarse con la copia de otra PC.
+    return base.concat(additions.filter(p => !p._deleted));
   }
   if (key === 'owner_data') {
     const overrides = JSON.parse(localStorage.getItem('owner_overrides') || '{}');
@@ -2271,20 +2279,34 @@ function setData(key, val) {
   if (key === 'prop_data') {
     // Separar ediciones de base vs adiciones nuevas
     const baseCarpetas = new Set(INIT_PROPS.map((p,i) => 'p_' + i));
-    const overrides = {}, additions = [];
+    const overrides = {};
     const presentIds = new Set(val.map(p => String(p.id)));
     val.forEach(p => {
       if (baseCarpetas.has(p.id)) overrides[p.id] = p;
-      else additions.push(p);
     });
     // Las propiedades base que ya no están presentes en val fueron eliminadas
     const deleted = Array.from(baseCarpetas).filter(id => !presentIds.has(String(id)));
+    // Adiciones: las que siguen presentes se guardan tal cual; las que
+    // estaban antes y ya NO están más en val se marcan como eliminadas
+    // (_deleted) en vez de borrarse del array, para que la fusión con el
+    // servidor respete el borrado (si simplemente se omiten, el servidor
+    // las vuelve a sumar al fusionar con la copia de otra PC que todavía
+    // las tenía).
+    const prevAdditions = JSON.parse(localStorage.getItem('prop_additions') || '[]');
+    const nuevasAdditions = val.filter(p => !baseCarpetas.has(p.id)).map(p =>
+      Object.assign({}, p, { _updatedAt: p._updatedAt || nowTS() })
+    );
+    const nuevosIds = new Set(nuevasAdditions.map(p => String(p.id)));
+    const tombstones = prevAdditions
+      .filter(p => !p._deleted && !nuevosIds.has(String(p.id)))
+      .map(p => Object.assign({}, p, { _deleted: true, _updatedAt: nowTS() }));
+    const additionsFinal = nuevasAdditions.concat(tombstones);
     localStorage.setItem('prop_overrides', JSON.stringify(overrides));
-    localStorage.setItem('prop_additions', JSON.stringify(additions));
+    localStorage.setItem('prop_additions', JSON.stringify(additionsFinal));
     localStorage.setItem('prop_deleted', JSON.stringify(deleted));
     if(typeof syncToFirebase === "function" && fbDb && !usingLocalMode && currentUser) {
       syncToFirebase('prop_overrides', overrides).catch(()=>{});
-      syncToFirebase('prop_additions', additions).catch(()=>{});
+      syncToFirebase('prop_additions', additionsFinal).catch(()=>{});
       syncToFirebase('prop_deleted', deleted).catch(()=>{});
     }
     return;
@@ -2584,19 +2606,26 @@ const CORRECCIONES_FECHA_INICIO_V1 = {
   '67':  '02/06/2024', // Zeballos 1450 3A      (fin 01/06/2026, 24 meses)
   '106': '16/12/2024'  // Riobamba 1048         (fin 15/12/2027, 36 meses)
 };
-// Elimina puntualmente la propiedad duplicada "115 - Montevideo 1455 Dpto"
-// que quedó agregada por separado repitiendo el número de carpeta de la
-// 115 correcta ("Montevideo 1455 Local"). No toca ninguna otra propiedad.
-function migrarEliminarCarpeta115DuplicadaV1() {
-  const FLAG = 'eliminar_115_duplicada_v1_done';
+// Elimina cualquier "propiedad agregada" (prop_additions) cuyo número de
+// carpeta ya exista entre las propiedades originales del listado -> son
+// duplicados por definición (la carpeta correcta ya está en su lugar).
+// Usa el borrado sincronizado de verdad con el servidor (a diferencia de
+// un intento anterior, que solo quitaba el registro del array local y por
+// eso "revivía" al sincronizar con la copia de otra PC).
+function migrarEliminarPropiedadesDuplicadasV2() {
+  const FLAG = 'eliminar_propiedades_duplicadas_v2_done';
   if (localStorage.getItem(FLAG) === '1') return;
+  const carpetasBase = new Set(INIT_PROPS.map(p => String(p.carpeta)).filter(c => c && c !== '-'));
   const additions = JSON.parse(localStorage.getItem('prop_additions') || '[]');
-  const filtradas = additions.filter(p =>
-    !(String(p.carpeta) === '115' && (p.direccion || '').trim().toLowerCase() === 'montevideo 1455 dpto')
-  );
-  if (filtradas.length !== additions.length) {
-    setData('prop_additions', filtradas);
-  }
+  let cambios = 0;
+  const nuevas = additions.map(p => {
+    if (!p._deleted && p.carpeta && carpetasBase.has(String(p.carpeta))) {
+      cambios++;
+      return Object.assign({}, p, { _deleted: true, _updatedAt: nowTS() });
+    }
+    return p;
+  });
+  if (cambios > 0) setData('prop_additions', nuevas);
   localStorage.setItem(FLAG, '1');
 }
 
@@ -4594,20 +4623,26 @@ function cambiarPropietarioSeleccionado() {
   showToast('Al guardar, esta propiedad va a pasar a ' + (owner.nombre||'') + ' ' + (owner.apellido||''));
 }
 
-function guardarPropietarioDesdeModal() {
-  const carpeta = document.getElementById('p_carpeta').value.trim();
-  if (!carpeta) { showToast('Primero ingresá el número de carpeta', 'error'); return; }
+// Sincroniza los datos de la pestaña "Propietario" (dentro de la ficha de
+// una propiedad) con owner_data, la única fuente real de datos de
+// propietarios. Se usa tanto desde el botón dedicado como desde el
+// guardado principal de la propiedad (para que el cambio de propietario
+// quede guardado sin depender de que se aprete un botón aparte).
+function sincronizarPropietarioDesdeFichaPropiedad(carpeta) {
+  if (!carpeta) return false;
   const owners = getData('owner_data') || [];
-  const ownerId = document.getElementById('pp_owner_id').value;
+  const ownerId = document.getElementById('pp_owner_id')?.value || '';
   const campos = {nombre:'pp_nombre',apellido:'pp_apellido',dni:'pp_dni',cuit:'pp_cuit',
                   telefono:'pp_tel',email:'pp_email',localidad:'pp_localidad',direccion:'pp_dir',
                   banco:'pp_banco',alias:'pp_alias',cbu:'pp_cbu'};
   const updated = {};
+  let algunCampoConDatos = false;
   for (const [f, elId] of Object.entries(campos)) {
     const el = document.getElementById(elId);
     updated[f] = el ? el.value : '';
+    if (updated[f]) algunCampoConDatos = true;
   }
-  // Asegurar que la carpeta esté en la lista de carpetas del propietario
+  if (!ownerId && !algunCampoConDatos) return false; // pestaña Propietario vacía: nada que sincronizar
   let idx = ownerId ? owners.findIndex(o => String(o.id) === String(ownerId)) : -1;
   if (idx >= 0) {
     const cList = (owners[idx].carpetas || '').split(',').map(c => c.trim()).filter(Boolean);
@@ -4619,16 +4654,28 @@ function guardarPropietarioDesdeModal() {
     idx = owners.findIndex(o => (o.carpetas || '').split(',').map(c => c.trim()).includes(carpeta));
     if (idx >= 0) {
       owners[idx] = { ...owners[idx], ...updated };
-    } else {
+    } else if (algunCampoConDatos) {
       // Nuevo propietario
       const nuevoOwner = { ...updated, id: Date.now(), carpetas: carpeta };
       owners.push(nuevoOwner);
-      document.getElementById('pp_owner_id').value = nuevoOwner.id;
+      const elId = document.getElementById('pp_owner_id'); if (elId) elId.value = nuevoOwner.id;
       desasignarCarpetasDeOtrosPropietarios(owners, carpeta, nuevoOwner.id);
+    } else {
+      return false;
     }
   }
   setData('owner_data', owners);
-  showToast('Propietario guardado y vinculado a carpeta ' + carpeta + ' ✓');
+  return true;
+}
+
+function guardarPropietarioDesdeModal() {
+  const carpeta = document.getElementById('p_carpeta').value.trim();
+  if (!carpeta) { showToast('Primero ingresá el número de carpeta', 'error'); return; }
+  if (sincronizarPropietarioDesdeFichaPropiedad(carpeta)) {
+    showToast('Propietario guardado y vinculado a carpeta ' + carpeta + ' ✓');
+  } else {
+    showToast('No hay datos de propietario para guardar', 'error');
+  }
 }
 
 // ── Propietario → pestaña Propiedades ────────────────────────────────────────
@@ -4706,6 +4753,43 @@ function row(label, value) {
   return '<div><span style="font-size:11px;color:var(--text-muted)">' + label + '</span><div style="margin-top:2px">' + value + '</div></div>';
 }
 
+// Muestra un selector con TODAS las propiedades existentes, para asignarle
+// una al propietario que se está creando/editando sin crear un registro
+// nuevo. Si la propiedad ya pertenece a otro propietario, se lo indica
+// (el traspaso real se aplica recién al guardar, vía la regla de
+// exclusividad ya existente en saveOwner()).
+function mostrarSelectorPropExistente() {
+  const cont = document.getElementById('owner-selector-existente');
+  const props = (getData('prop_data')||[]).filter(p=>p.carpeta && p.carpeta!=='-')
+    .sort((a,b)=>(parseFloat(a.carpeta)||0)-(parseFloat(b.carpeta)||0));
+  cont.style.display = 'block';
+  cont.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;background:var(--bg-subtle);padding:10px;border-radius:8px">
+      <select class="form-control" id="owner-select-prop-existente" style="flex:1">
+        <option value="">-- Buscar propiedad por carpeta o dirección --</option>
+        ${props.map(p => {
+          const duenioActual = getOwnerName(p.carpeta);
+          const nota = (duenioActual && duenioActual !== '-') ? ` (actualmente: ${duenioActual})` : '';
+          return `<option value="${p.carpeta}">${p.carpeta} — ${p.direccion||''}${nota}</option>`;
+        }).join('')}
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="confirmarAsignarPropExistente()">Agregar</button>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('owner-selector-existente').style.display='none'">✕</button>
+    </div>`;
+}
+
+function confirmarAsignarPropExistente() {
+  const sel = document.getElementById('owner-select-prop-existente');
+  const carpeta = sel ? sel.value : '';
+  if (!carpeta) { showToast('Eleg\u00ed una propiedad de la lista', 'error'); return; }
+  const el = document.getElementById('o_carpetas');
+  const actuales = (el.value || '').split(',').map(c => c.trim()).filter(Boolean);
+  if (!actuales.includes(carpeta)) actuales.push(carpeta);
+  el.value = actuales.join(', ');
+  document.getElementById('owner-selector-existente').style.display = 'none';
+  showToast('Propiedad agregada. Apretá "Guardar" para confirmar la asignación.');
+}
+
 function nuevaPropDesdeOwner() {
   // Sincroniza carpetas del propietario actual y abre nueva propiedad
   closeModal('modal-propietario');
@@ -4728,6 +4812,11 @@ function saveProp() {
   if(currentId) { const idx=data.findIndex(x=>String(x.id)===String(currentId)); if(idx>=0) data[idx]={...data[idx],...updated}; }
   else { updated.id=Date.now(); data.push(updated); }
   setData('prop_data',data);
+  // Sincronizar también la pestaña "Propietario" (si se tocó algo ahí), sin
+  // depender de que se aprete el botón aparte "Guardar propietario" — así
+  // un cambio de propietario nunca se pierde por guardar desde el botón
+  // principal.
+  sincronizarPropietarioDesdeFichaPropiedad(updated.carpeta);
   // Solo se registra el valor histórico del mes actual si el alquiler
   // efectivamente cambió en esta edición. Así no se pisa una corrección
   // manual hecha en "Valores históricos" al guardar otros campos de la
@@ -7916,7 +8005,7 @@ async function iniciarApp() {
   migrarValoresHistoricosSeedTodos();
   migrarValoresHistoricosSeedTodosV2();
   migrarValoresHistoricosRestauracionV3();
-  migrarEliminarCarpeta115DuplicadaV1();
+  migrarEliminarPropiedadesDuplicadasV2();
   migrarCorreccionFechaInicioV1();
   sincronizarAlquileresConMesActual();
   // Recién ahora, con los datos reales del servidor ya en el navegador, se
@@ -8714,8 +8803,10 @@ window.setData = function(key, val) {
     if (key === 'prop_data') {
       const ov = JSON.parse(localStorage.getItem('prop_overrides') || '{}');
       const ad = JSON.parse(localStorage.getItem('prop_additions') || '[]');
+      const del = JSON.parse(localStorage.getItem('prop_deleted') || '[]');
       _postToServer('prop_overrides', ov);
       _postToServer('prop_additions', ad);
+      _postToServer('prop_deleted', del);
     }
     if (key === 'owner_data') {
       const ov = JSON.parse(localStorage.getItem('owner_overrides') || '{}');

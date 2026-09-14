@@ -152,6 +152,19 @@ function fusionarPorId(existentes, entrantes) {
   return Array.from(mapa.values());
 }
 
+// Listas simples de valores (no objetos), ej. prop_deleted: un array de IDs
+// borrados. No tienen "id" propio para fusionar por registro, así que se
+// combinan por UNIÓN: cualquier valor que ya estuviera en el servidor o que
+// venga en este guardado, queda. Así, una PC con una lista más vieja/corta
+// nunca puede "revivir" un borrado que ya había hecho la otra PC.
+function esArrayDePrimitivos(value) {
+  return Array.isArray(value) && value.every(x => x === null || typeof x !== 'object');
+}
+function fusionarPorUnion(existentes, entrantes) {
+  const set = new Set([...(Array.isArray(existentes) ? existentes : []), ...(Array.isArray(entrantes) ? entrantes : [])].map(String));
+  return Array.from(set);
+}
+
 // Fusión profunda GENÉRICA para otros objetos anidados tipo diccionario que
 // también corrían el mismo riesgo (ej. prop_overrides/owner_overrides/
 // tenant_overrides: id -> {campos de esa propiedad/propietario/inquilino}).
@@ -316,6 +329,7 @@ app.post('/api/set', async (req, res) => {
 
   let valorFinal = value;
   const CLAVES_OBJETO_FUSIONABLE = ['prop_overrides', 'owner_overrides', 'tenant_overrides'];
+  const CLAVES_UNION_SIMPLE = ['prop_deleted'];
   if (esColeccionFusionable(value)) {
     const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
     const existentes = Array.isArray(rows[0] && rows[0].value) ? rows[0].value : [];
@@ -328,6 +342,10 @@ app.post('/api/set', async (req, res) => {
     const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
     const existente = esObjetoPlano(rows[0] && rows[0].value) ? rows[0].value : {};
     valorFinal = fusionarObjetoProfundo(existente, value);
+  } else if (CLAVES_UNION_SIMPLE.includes(key) && esArrayDePrimitivos(value)) {
+    const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
+    const existentes = Array.isArray(rows[0] && rows[0].value) ? rows[0].value : [];
+    valorFinal = fusionarPorUnion(existentes, value);
   }
 
   await pool.query(
