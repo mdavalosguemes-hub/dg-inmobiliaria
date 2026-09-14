@@ -1558,6 +1558,13 @@
             Datos del Propietario
             <button class="btn btn-secondary btn-sm" onclick="guardarPropietarioDesdeModal()" style="font-size:11px">💾 Guardar propietario</button>
           </div>
+          <div class="form-group full" style="margin-bottom:10px">
+            <label>Propietario asignado</label>
+            <select class="form-control" id="pp_owner_select" onchange="cambiarPropietarioSeleccionado()">
+              <option value="">-- Seleccionar propietario existente --</option>
+              <option value="__nuevo__">+ Cargar como propietario nuevo</option>
+            </select>
+          </div>
           <div class="form-grid">
             <input type="hidden" id="pp_owner_id">
             <div class="form-group"><label>Nombre</label><input type="text" class="form-control" id="pp_nombre"></div>
@@ -2545,6 +2552,13 @@ function setValorHistorico(carpeta, anio, mes, valor) {
   if (!all[carpeta][anio]) all[carpeta][anio] = {};
   all[carpeta][anio][mes] = valor;
   setData('valores_historicos', all);
+  // Si el mes/año editado es el mes calendario REAL de hoy, actualizar de
+  // inmediato "Valor alquiler actual" (y Comisión/Gastos admin) de Contrato
+  // para esta misma propiedad, sin esperar a la próxima carga del sistema.
+  const hoy = new Date();
+  if (String(anio) === String(hoy.getFullYear()) && String(mes) === String(hoy.getMonth() + 1)) {
+    sincronizarUnaPropiedadConMesActual(carpeta);
+  }
 }
 
 // ------------------------------------------------------------
@@ -2570,6 +2584,22 @@ const CORRECCIONES_FECHA_INICIO_V1 = {
   '67':  '02/06/2024', // Zeballos 1450 3A      (fin 01/06/2026, 24 meses)
   '106': '16/12/2024'  // Riobamba 1048         (fin 15/12/2027, 36 meses)
 };
+// Elimina puntualmente la propiedad duplicada "115 - Montevideo 1455 Dpto"
+// que quedó agregada por separado repitiendo el número de carpeta de la
+// 115 correcta ("Montevideo 1455 Local"). No toca ninguna otra propiedad.
+function migrarEliminarCarpeta115DuplicadaV1() {
+  const FLAG = 'eliminar_115_duplicada_v1_done';
+  if (localStorage.getItem(FLAG) === '1') return;
+  const additions = JSON.parse(localStorage.getItem('prop_additions') || '[]');
+  const filtradas = additions.filter(p =>
+    !(String(p.carpeta) === '115' && (p.direccion || '').trim().toLowerCase() === 'montevideo 1455 dpto')
+  );
+  if (filtradas.length !== additions.length) {
+    setData('prop_additions', filtradas);
+  }
+  localStorage.setItem(FLAG, '1');
+}
+
 function migrarCorreccionFechaInicioV1() {
   const FLAG = 'correccion_fecha_inicio_v1_done';
   if (localStorage.getItem(FLAG) === '1') return;
@@ -4523,6 +4553,14 @@ function cargarPropietarioDesdeProp() {
     const cs = (o.carpetas || '').split(',').map(c => c.trim());
     return cs.includes(String(carpeta));
   });
+  // Poblar el selector con todos los propietarios existentes
+  const sel = document.getElementById('pp_owner_select');
+  if (sel) {
+    sel.innerHTML = '<option value="">-- Seleccionar propietario existente --</option>' +
+      '<option value="__nuevo__">+ Cargar como propietario nuevo</option>' +
+      owners.map(o => `<option value="${o.id}">${o.nombre||''} ${o.apellido||''}</option>`).join('');
+    sel.value = owner ? String(owner.id) : '';
+  }
   const campos = ['nombre','apellido','dni','cuit','tel','email','localidad','dir','banco','alias','cbu'];
   const ownerMap = {nombre:'nombre',apellido:'apellido',dni:'dni',cuit:'cuit',tel:'telefono',
                     email:'email',localidad:'localidad',dir:'direccion',banco:'banco',alias:'alias',cbu:'cbu'};
@@ -4531,6 +4569,29 @@ function cargarPropietarioDesdeProp() {
     const el = document.getElementById('pp_' + k);
     if (el) el.value = owner ? (owner[ownerMap[k]] || '') : '';
   });
+}
+
+// Al elegir otro propietario del selector: carga sus datos (para
+// transferirle esta propiedad al guardar) o limpia el formulario para
+// cargar uno nuevo.
+function cambiarPropietarioSeleccionado() {
+  const sel = document.getElementById('pp_owner_select');
+  const campos = ['nombre','apellido','dni','cuit','tel','email','localidad','dir','banco','alias','cbu'];
+  if (!sel.value || sel.value === '__nuevo__') {
+    document.getElementById('pp_owner_id').value = '';
+    campos.forEach(k => { const el = document.getElementById('pp_' + k); if (el) el.value = ''; });
+    return;
+  }
+  const owner = (getData('owner_data') || []).find(o => String(o.id) === String(sel.value));
+  if (!owner) return;
+  const ownerMap = {nombre:'nombre',apellido:'apellido',dni:'dni',cuit:'cuit',tel:'telefono',
+                    email:'email',localidad:'localidad',dir:'direccion',banco:'banco',alias:'alias',cbu:'cbu'};
+  document.getElementById('pp_owner_id').value = owner.id;
+  campos.forEach(k => {
+    const el = document.getElementById('pp_' + k);
+    if (el) el.value = owner[ownerMap[k]] || '';
+  });
+  showToast('Al guardar, esta propiedad va a pasar a ' + (owner.nombre||'') + ' ' + (owner.apellido||''));
 }
 
 function guardarPropietarioDesdeModal() {
@@ -4552,6 +4613,7 @@ function guardarPropietarioDesdeModal() {
     const cList = (owners[idx].carpetas || '').split(',').map(c => c.trim()).filter(Boolean);
     if (!cList.includes(carpeta)) cList.push(carpeta);
     owners[idx] = { ...owners[idx], ...updated, carpetas: cList.join(', ') };
+    desasignarCarpetasDeOtrosPropietarios(owners, carpeta, owners[idx].id);
   } else {
     // Buscar si ya existe uno con esa carpeta
     idx = owners.findIndex(o => (o.carpetas || '').split(',').map(c => c.trim()).includes(carpeta));
@@ -4562,6 +4624,7 @@ function guardarPropietarioDesdeModal() {
       const nuevoOwner = { ...updated, id: Date.now(), carpetas: carpeta };
       owners.push(nuevoOwner);
       document.getElementById('pp_owner_id').value = nuevoOwner.id;
+      desasignarCarpetasDeOtrosPropietarios(owners, carpeta, nuevoOwner.id);
     }
   }
   setData('owner_data', owners);
@@ -4926,7 +4989,7 @@ function liqMakeFilaHTML(idx, prop) {
       <div style="display:grid;grid-template-columns:80px minmax(0,1fr) 130px 130px 130px auto;gap:8px;align-items:end">
         <div class="form-group" style="margin:0;min-width:0">
           <label style="font-size:10px">Carpeta</label>
-          <input type="text" class="form-control" id="lf_carp_${idx}" value="${carp}" style="font-weight:700;text-align:center;width:100%;box-sizing:border-box">
+          <input type="text" class="form-control" id="lf_carp_${idx}" value="${carp}" style="font-weight:700;text-align:center;width:100%;box-sizing:border-box" oninput="verificarCoherenciaLiq(${idx})">
         </div>
         <div class="form-group" style="margin:0;min-width:0">
           <label style="font-size:10px">Dirección</label>
@@ -4934,7 +4997,7 @@ function liqMakeFilaHTML(idx, prop) {
         </div>
         <div class="form-group" style="margin:0;min-width:0">
           <label style="font-size:10px">Período (este prop.)</label>
-          <input type="text" class="form-control" id="lf_per_${idx}" value="${liqPeriodoGlobalAMMYY(document.getElementById('liq_periodo_global')?.value)}" placeholder="Ej: 09/26" style="font-size:12px;width:100%;box-sizing:border-box">
+          <input type="text" class="form-control" id="lf_per_${idx}" value="${liqPeriodoGlobalAMMYY(document.getElementById('liq_periodo_global')?.value)}" placeholder="Ej: 09/26" style="font-size:12px;width:100%;box-sizing:border-box" oninput="verificarCoherenciaLiq(${idx})">
         </div>
         <div class="form-group" style="margin:0;min-width:0">
           <label style="font-size:10px">Alquiler $</label>
@@ -4946,6 +5009,7 @@ function liqMakeFilaHTML(idx, prop) {
         </div>
         <button class="btn btn-danger btn-sm" onclick="liqQuitarFila(${idx})" title="Quitar" style="margin-bottom:2px">✕</button>
       </div>
+      <div id="lf_warn_${idx}"></div>
       <!-- Fila 2: Impuestos/Arreglos (fijo) + 6 extras suma/resta -->
       <div style="margin-top:10px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:10px;align-items:start">
         <div class="form-group" style="margin:0;min-width:0">
@@ -4982,6 +5046,51 @@ function liqMakeFilaHTML(idx, prop) {
 
 
 let liqFilaIds = [];
+
+// Control de coherencia (Recibo / Contrato / Valores Históricos): compara
+// el valor de alquiler de esa carpeta y ese período según las 3 fuentes, y
+// muestra una advertencia si no coinciden. Si alguna fuente no tiene dato
+// para ese mes, simplemente no se compara contra ella (no es un error).
+function verificarCoherenciaLiq(idx) {
+  const warnEl = document.getElementById('lf_warn_' + idx);
+  if (!warnEl) return;
+  const carpeta = (document.getElementById('lf_carp_'+idx)?.value||'').trim();
+  const periodoInput = (document.getElementById('lf_per_'+idx)?.value||'').trim();
+  const periodoStr = periodoInput || reciboPeriodoAMMYY(document.getElementById('liq_periodo_global')?.value||'');
+  if (!carpeta || !periodoStr) { warnEl.innerHTML=''; return; }
+  const partes = periodoStr.split('/');
+  if (partes.length !== 2) { warnEl.innerHTML=''; return; }
+  const mes = parseInt(partes[0],10);
+  const anio = partes[1].length===4 ? parseInt(partes[1],10) : 2000+parseInt(partes[1],10);
+  if (!mes || !anio) { warnEl.innerHTML=''; return; }
+
+  // 1) Contrato (Valor alquiler actual)
+  const prop = (getData('prop_data')||[]).find(p=>String(p.carpeta)===String(carpeta));
+  const valorContrato = (prop && prop.alquiler !== undefined && prop.alquiler !== '') ? parseFloat(prop.alquiler) : null;
+
+  // 2) Valores Históricos del mes que se está liquidando
+  const vh = buscarUltimoValorVigente(getValoresHistoricos(), carpeta, String(anio), String(mes));
+  const valorHist = (vh !== '' && vh !== undefined && vh !== null) ? parseFloat(vh) : null;
+
+  // 3) Recibo hecho para esa carpeta con ese mismo período de Alquiler
+  const recibo = visibles(getData('recibo_data')||[]).find(r =>
+    String(r.carpeta) === String(carpeta) && r.periodos && r.periodos['Alquiler'] === periodoStr
+  );
+  const valorRecibo = (recibo && recibo.conceptos && recibo.conceptos['Alquiler'] != null)
+    ? parseFloat(recibo.conceptos['Alquiler']) : null;
+
+  const valoresPresentes = [valorContrato, valorHist, valorRecibo].filter(v => v !== null && !isNaN(v));
+  if (valoresPresentes.length < 2) { warnEl.innerHTML=''; return; } // no hay con qué comparar
+
+  const distintos = new Set(valoresPresentes.map(v => Math.round(v))).size > 1;
+  if (!distintos) { warnEl.innerHTML=''; return; }
+
+  const fmt = v => (v===null || isNaN(v)) ? '<span style="color:#999">sin dato</span>' : '$ ' + v.toLocaleString('es-AR');
+  warnEl.innerHTML = `<div style="background:#fff3cd;border:1px solid #ffe58f;border-radius:6px;padding:8px 10px;margin:8px 0 0;font-size:12px;color:#8a6d00;line-height:1.6">
+    <strong>⚠️ INCONSISTENCIA EN VALOR DE ALQUILER</strong><br>
+    Recibo: ${fmt(valorRecibo)} &nbsp;·&nbsp; Contrato: ${fmt(valorContrato)} &nbsp;·&nbsp; Valores Históricos: ${fmt(valorHist)}
+  </div>`;
+}
 
 function calcFilaLiq(idx) {
   const alq = parseFloat(document.getElementById('lf_alq_'+idx)?.value)||0;
@@ -5035,6 +5144,7 @@ function nuevaLiquidacionCompleta(grupoId) {
         liqFilaIds.push(idx);
         container.insertAdjacentHTML('beforeend', liqMakeFilaHTML(idx, p));
         calcFilaLiq(idx);
+        verificarCoherenciaLiq(idx);
       });
     } else {
       // Sin propiedades conocidas: agregar fila vacía
@@ -5105,6 +5215,7 @@ function editLiquidacionGrupo(grupoId) {
       setV('lf_em_'+idx+'_'+ei, montoVal || '');
     });
     calcFilaLiq(idx);
+    verificarCoherenciaLiq(idx);
   });
 
   container.insertAdjacentHTML('beforeend',
@@ -5360,7 +5471,25 @@ function saveOwner() {
   for(const [k,elId] of Object.entries(fields)) { const el=document.getElementById(elId); updated[k]=el?el.value:''; }
   if(currentId) { const idx=data.findIndex(x=>String(x.id)===String(currentId)); if(idx>=0) data[idx]={...data[idx],...updated}; }
   else { updated.id=Date.now(); data.push(updated); }
+  // Una propiedad no puede quedar asignada a dos propietarios a la vez: por
+  // cada carpeta que este propietario reclama, se la sacamos de cualquier
+  // OTRO propietario que la tuviera cargada.
+  desasignarCarpetasDeOtrosPropietarios(data, updated.carpetas, currentId);
   setData('owner_data',data); closeModal('modal-propietario'); renderPropietarios(); showToast('Propietario guardado');
+}
+
+// Quita las carpetas indicadas (string separado por comas) de la lista de
+// "carpetas" de cualquier propietario que NO sea "idPropietarioActual", para
+// que una propiedad nunca quede asignada a dos propietarios simultáneamente.
+function desasignarCarpetasDeOtrosPropietarios(owners, carpetasStr, idPropietarioActual) {
+  const carpetasNuevas = (carpetasStr||'').split(',').map(c=>c.trim()).filter(Boolean);
+  if (!carpetasNuevas.length) return;
+  owners.forEach(o => {
+    if (idPropietarioActual && String(o.id) === String(idPropietarioActual)) return;
+    const cList = (o.carpetas||'').split(',').map(c=>c.trim()).filter(Boolean);
+    const filtradas = cList.filter(c => !carpetasNuevas.includes(c));
+    if (filtradas.length !== cList.length) o.carpetas = filtradas.join(', ');
+  });
 }
 
 // ============================================================
@@ -7787,6 +7916,7 @@ async function iniciarApp() {
   migrarValoresHistoricosSeedTodos();
   migrarValoresHistoricosSeedTodosV2();
   migrarValoresHistoricosRestauracionV3();
+  migrarEliminarCarpeta115DuplicadaV1();
   migrarCorreccionFechaInicioV1();
   sincronizarAlquileresConMesActual();
   // Recién ahora, con los datos reales del servidor ya en el navegador, se
@@ -8305,29 +8435,49 @@ async function loadAllFromServer() {
 // refresh ya lo actualiza solo. Si una propiedad no tiene ningún valor
 // histórico cargado, no se toca (se deja como está).
 // ============================================================
-function sincronizarAlquileresConMesActual() {
+// Sincroniza UNA propiedad puntual: si tiene un valor histórico cargado
+// para el mes/año calendario REAL de hoy, actualiza su "Valor alquiler
+// actual" (y Comisión/Gastos admin, con la misma fórmula de siempre). Se
+// usa tanto en el barrido general al abrir el sistema, como al instante,
+// cuando se edita a mano un valor histórico del mes en curso.
+function sincronizarUnaPropiedadConMesActual(carpeta) {
   const hoy = new Date();
   const mes = hoy.getMonth() + 1, anio = hoy.getFullYear();
   const valoresHist = getValoresHistoricos();
   const data = getData('prop_data');
+  const p = data.find(x => String(x.carpeta) === String(carpeta));
+  if (!p) return false;
+  const valor = buscarUltimoValorVigente(valoresHist, String(carpeta), String(anio), String(mes));
+  if (valor === '' || valor === undefined || valor === null) return false;
+  const alquiler = parseFloat(valor) || 0;
+  if (String(p.alquiler || '') === String(alquiler)) return false;
+  p.alquiler = String(alquiler);
+  p.comision = String(Math.ceil((alquiler * 0.08) / 100) * 100);
+  p.gastos   = String(Math.ceil((alquiler * 0.03) / 100) * 100);
+  setData('prop_data', data);
+  // Si esta misma propiedad está abierta ahora mismo en el modal (pestaña
+  // Contrato), refrescar los campos visibles en el instante.
+  const carpetaAbierta = document.getElementById('p_carpeta');
+  if (carpetaAbierta && carpetaAbierta.value === String(carpeta)) {
+    const alqEl = document.getElementById('p_alquiler');
+    const comEl = document.getElementById('p_comision');
+    const gasEl = document.getElementById('p_gastos');
+    if (alqEl) alqEl.value = p.alquiler;
+    if (comEl) comEl.value = p.comision;
+    if (gasEl) gasEl.value = p.gastos;
+  }
+  const pagPropiedades = document.getElementById('page-propiedades');
+  if (pagPropiedades && pagPropiedades.classList.contains('active')) renderPropiedades();
+  return true;
+}
+
+function sincronizarAlquileresConMesActual() {
+  const data = getData('prop_data');
   let cambios = 0;
   data.forEach(p => {
     if (!p.carpeta || p.carpeta === '-') return;
-    const valor = buscarUltimoValorVigente(valoresHist, String(p.carpeta), String(anio), String(mes));
-    if (valor === '' || valor === undefined || valor === null) return; // sin historial: no se toca
-    const alquiler = parseFloat(valor) || 0;
-    if (String(p.alquiler || '') !== String(alquiler)) {
-      p.alquiler  = String(alquiler);
-      p.comision  = String(Math.ceil((alquiler * 0.08) / 100) * 100);
-      p.gastos    = String(Math.ceil((alquiler * 0.03) / 100) * 100);
-      cambios++;
-    }
+    if (sincronizarUnaPropiedadConMesActual(p.carpeta)) cambios++;
   });
-  if (cambios > 0) {
-    setData('prop_data', data);
-    const pagPropiedades = document.getElementById('page-propiedades');
-    if (pagPropiedades && pagPropiedades.classList.contains('active')) renderPropiedades();
-  }
   return cambios;
 }
 
