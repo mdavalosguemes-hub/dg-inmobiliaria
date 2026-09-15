@@ -5259,15 +5259,16 @@ function editLiquidacionGrupo(grupoId) {
   // que crecía en cada edición.
   const filas = visibles(all).filter(l => (l.grupoId||l.id) === grupoId);
   if (!filas.length) return;
-  // Auto-corrección: si ya había filas duplicadas de la misma propiedad
-  // (por el bug de arriba), al editar se colapsan a una sola por propiedad
-  // (se conserva la más reciente según _updatedAt), así que guardar la
-  // liquidación después de esto limpia el duplicado definitivamente.
+  // Auto-corrección: si ya había filas REALMENTE duplicadas (misma carpeta
+  // Y mismo período) por el bug de edición anterior, se colapsan a una sola
+  // (se conserva la más reciente). Una misma carpeta con distintos períodos
+  // (ej. pagando varios meses atrasados) NO se toca: son filas legítimas.
   const vistos = new Map();
   filas.forEach(l => {
-    const key = (l.carpeta && String(l.carpeta).trim())
+    const base = (l.carpeta && String(l.carpeta).trim())
       ? 'c:' + String(l.carpeta).trim()
       : 'd:' + String(l.direccion || '').trim().toLowerCase();
+    const key = base + '|' + String(l.periodo || '').trim().toLowerCase();
     const anterior = vistos.get(key);
     if (!anterior || (l._updatedAt || 0) >= (anterior._updatedAt || 0)) vistos.set(key, l);
   });
@@ -5403,7 +5404,7 @@ function printLiquidacionGrupo(grupoId) {
   // liquidación todavía no se volvió a guardar desde que se corrigió el bug.
   { const vistos = new Map();
     filas.forEach(l => {
-      const key = (l.carpeta && String(l.carpeta).trim()) ? 'c:'+String(l.carpeta).trim() : 'd:'+String(l.direccion||'').trim().toLowerCase();
+      const key = ((l.carpeta && String(l.carpeta).trim()) ? 'c:'+String(l.carpeta).trim() : 'd:'+String(l.direccion||'').trim().toLowerCase()) + '|' + String(l.periodo||'').trim().toLowerCase();
       const anterior = vistos.get(key);
       if (!anterior || (l._updatedAt||0) >= (anterior._updatedAt||0)) vistos.set(key, l);
     });
