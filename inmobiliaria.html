@@ -5453,18 +5453,16 @@ function printLiquidacionGrupo(grupoId) {
       </div>` : '';
 
   const html = `
-    <div style="display:flex;flex-direction:column;min-height:235mm">
-      <div>
-        ${buildHeaderHTML({tituloDoc:'Liquidación a Propietario'})}
-        <div style="display:flex;justify-content:space-between;margin-bottom:18px;align-items:baseline">
-          <div style="font-weight:700;font-size:15px">${propNombre}</div>
-          <div style="font-size:12px;color:#666">Rosario, ${dateStr}</div>
-        </div>
-        <div style="font-size:13px;font-weight:700;text-align:center;margin-bottom:16px;letter-spacing:.5px;text-transform:uppercase;color:#1a4480">${periodoG}</div>
-        ${bloques}
-        ${totalSection}
+    <div>
+      ${buildHeaderHTML({tituloDoc:'Liquidación a Propietario'})}
+      <div style="display:flex;justify-content:space-between;margin-bottom:18px;align-items:baseline">
+        <div style="font-weight:700;font-size:15px">${propNombre}</div>
+        <div style="font-size:12px;color:#666">Rosario, ${dateStr}</div>
       </div>
-      <div style="page-break-inside:avoid;margin-top:auto;padding-top:30px">
+      <div style="font-size:13px;font-weight:700;text-align:center;margin-bottom:16px;letter-spacing:.5px;text-transform:uppercase;color:#1a4480">${periodoG}</div>
+      ${bloques}
+      ${totalSection}
+      <div style="page-break-inside:avoid;margin-top:50px">
         <div style="display:flex;justify-content:space-around;text-align:center">
           <div style="min-width:180px">
             <div style="border-top:1.5px solid #1a4480;padding-top:8px">
@@ -7886,7 +7884,8 @@ function openPrintWindow(html, title, tipoDoc) {
     .info-box strong { color:#1a4480; }
     input, select, textarea { font-family: 'Merriweather', Georgia, serif; }
     @media print {
-      @page { size: A4 portrait; margin: 0; }
+      @page { size: A4 portrait; margin: 15mm 0; }
+      @page :first { margin-top: 0; }
       body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
     }
   </style>
