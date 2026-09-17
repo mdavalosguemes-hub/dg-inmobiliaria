@@ -2299,7 +2299,13 @@ function getData(key) {
     // borran con el mismo criterio de borrado suave que recibos/liquidaciones
     // (_deleted), para que la eliminación se sincronice de verdad con el
     // servidor y no "reviva" al fusionarse con la copia de otra PC.
-    return base.concat(additions.filter(p => !p._deleted));
+    // Además, de forma PERMANENTE y defensiva: una "adición" cuyo número de
+    // carpeta ya exista en el listado original nunca se muestra, sea cual
+    // sea el motivo por el que haya vuelto a aparecer (evita para siempre
+    // el duplicado de carpetas como la 115, sin depender de una limpieza
+    // puntual que se pueda deshacer).
+    const carpetasBase = new Set(INIT_PROPS.map(p => String(p.carpeta)).filter(c => c && c !== '-'));
+    return base.concat(additions.filter(p => !p._deleted && !carpetasBase.has(String(p.carpeta))));
   }
   if (key === 'owner_data') {
     const overrides = JSON.parse(localStorage.getItem('owner_overrides') || '{}');
