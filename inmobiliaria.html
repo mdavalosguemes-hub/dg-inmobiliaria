@@ -1929,6 +1929,12 @@
         <div class="form-group"><label>Locatario</label><input type="text" class="form-control" id="r_locatario"></div>
         <div class="form-group"><label>Domicilio</label><input type="text" class="form-control" id="r_domicilio"></div>
         <div class="form-group"><label>Período</label><input type="text" class="form-control" id="r_periodo" placeholder="Ej: Abril 2026" oninput="sincronizarPeriodoConceptos()"></div>
+        <div class="form-group"><label>Forma de pago</label>
+          <select class="form-control" id="r_forma_pago">
+            <option value="Efectivo">Efectivo</option>
+            <option value="Transferencia">Transferencia</option>
+          </select>
+        </div>
       </div>
       <div class="form-section-title" style="margin-bottom:12px">Conceptos</div>
       <div style="display:grid;grid-template-columns:1fr 130px 150px;gap:6px;margin-bottom:4px">
@@ -6711,6 +6717,75 @@ function actualizarNumeroRecibo() {
     document.getElementById('r_numero').value = getNextReciboNum();
   }
 }
+// ============================================================
+// RECIBOS → CAJA: honorarios automáticos (Gastos administrativos + Comisión)
+// Cada recibo tiene, como mucho, UN movimiento de Caja vinculado. Se usa un
+// id determinístico ('HON_' + id del recibo) en vez de buscar por
+// importe/concepto, así que nunca se puede duplicar: guardar el mismo
+// recibo de nuevo siempre actualiza el mismo movimiento.
+// ============================================================
+function idMovimientoHonorarios(reciboId) { return 'HON_' + reciboId; }
+
+// Crea o actualiza (nunca duplica) el movimiento de Caja de honorarios
+// correspondiente a un recibo. No toca movimientos manuales.
+function sincronizarHonorariosEnCaja(recibo) {
+  const gastosAdmin = parseFloat((recibo.conceptos||{})['Gastos administrativos']) || 0;
+  const prop = getData('prop_data').find(p => String(p.carpeta) === String(recibo.carpeta));
+  const comision = prop ? (parseFloat(prop.comision) || 0) : 0;
+  // Honorarios y Averiguaciones del recibo (si están cargados) se suman al
+  // mismo movimiento de Caja, y cambian el concepto para dejar constancia.
+  const honorarios = parseFloat((recibo.conceptos||{})['Honorarios']) || 0;
+  const averiguaciones = parseFloat((recibo.conceptos||{})['Averiguaciones']) || 0;
+  // La cuota (C1/2, C2/3, etc.) se toma del campo "Período" del concepto
+  // "Honorarios" del propio recibo (no se agrega ningún campo nuevo).
+  const cuota = ((recibo.periodos||{})['Honorarios'] || '').trim();
+  const monto = gastosAdmin + comision + honorarios + averiguaciones;
+
+  let concepto = 'Honorarios';
+  if (honorarios > 0) {
+    concepto = 'Honorarios alquiler + contrato' + (cuota ? ' ' + cuota : '');
+    if (averiguaciones > 0) concepto += ' + averiguaciones';
+  } else if (averiguaciones > 0) {
+    concepto = 'Honorarios + averiguaciones';
+  }
+
+  const idMov = idMovimientoHonorarios(recibo.id);
+  const data = getData('caja_data') || [];
+  const idx = data.findIndex(m => String(m.id) === String(idMov));
+
+  if (monto <= 0) {
+    // Ya no corresponde honorarios (ej. se sacaron los gastos admin y no hay
+    // comisión cargada): si había un movimiento automático, se elimina
+    // (borrado suave) para no dejar un importe $0 dando vueltas.
+    if (idx >= 0 && !data[idx]._deleted) {
+      data[idx] = Object.assign({}, data[idx], { _deleted: true, _updatedAt: nowTS() });
+      setData('caja_data', data);
+    }
+    return;
+  }
+
+  const mov = {
+    id: idMov,
+    tipo: 'ingreso',
+    fecha: recibo.fecha,
+    medio: recibo.formaPago || 'Efectivo',
+    concepto: concepto,
+    carpeta: recibo.carpeta || '',
+    monto: monto,
+    obs: 'Generado autom\u00e1ticamente desde el Recibo ' + (recibo.numero || ''),
+    origenReciboId: recibo.id,
+    _updatedAt: nowTS()
+  };
+  if (idx >= 0) data[idx] = mov; else data.push(mov);
+  setData('caja_data', data);
+}
+
+// Elimina (borrado suave) el movimiento de Caja vinculado a un recibo, sin
+// tocar ningún movimiento manual.
+function eliminarHonorariosDeCaja(reciboId) {
+  deleteRecord('caja_data', idMovimientoHonorarios(reciboId));
+}
+
 function newRecibo() {
   currentId=null; currentType='recibo';
   document.getElementById('modal-recibo-title').textContent='Nuevo Recibo';
@@ -6719,6 +6794,7 @@ function newRecibo() {
   reciboNumeroManual = false;
   document.getElementById('r_numero').value = getNextReciboNum();
   document.getElementById('r_periodo').value = reciboPeriodoPorDefecto();
+  document.getElementById('r_forma_pago').value = 'Efectivo';
   sincronizarPeriodoConceptos();
   openModal('modal-recibo');
 }
@@ -6736,6 +6812,7 @@ function editRecibo(id) {
   document.getElementById('r_locatario').value=r.locatario||'';
   document.getElementById('r_domicilio').value=r.domicilio||'';
   document.getElementById('r_periodo').value=r.periodo||'';
+  document.getElementById('r_forma_pago').value=r.formaPago||'Efectivo';
   if(r.conceptos) { for(const[c,v] of Object.entries(r.conceptos)) { const el=document.querySelector(`[data-concepto="${c}"]`); if(el) el.value=v; } }
   if(r.periodos) { for(const[c,p] of Object.entries(r.periodos)) { const el=document.querySelector(`[data-periodo-concepto="${c}"]`); if(el) el.value=p; } }
   calcTotal(); openModal('modal-recibo');
@@ -6798,6 +6875,7 @@ async function _guardarReciboInterno() {
     locatario,
     domicilio: document.getElementById('r_domicilio').value,
     periodo,
+    formaPago: document.getElementById('r_forma_pago').value,
     conceptos,
     periodos,
     total,
@@ -6810,6 +6888,10 @@ async function _guardarReciboInterno() {
     data.push(recibo);
   }
   setData('recibo_data', data);
+  // Genera o actualiza (nunca duplica) el movimiento de Caja de honorarios
+  // correspondiente (Gastos administrativos + Comisión), según la Forma de
+  // pago elegida en el recibo.
+  sincronizarHonorariosEnCaja(recibo);
   closeModal('modal-recibo');
   renderRecibos();
   showToast('Recibo ' + numero + ' guardado');
@@ -7806,6 +7888,7 @@ function deleteReciboDesdeListado(id) {
   if (!confirm('¿Seguro que querés eliminar este recibo? Esta acción no se puede deshacer.')) return;
   const r = getData('recibo_data').find(x => String(x.id) === String(id));
   deleteRecord('recibo_data', id);
+  eliminarHonorariosDeCaja(id);
   if (r) liberarNumeroRecibo(r.numero);
   renderRecibos();
   showToast('Recibo eliminado');
@@ -7826,6 +7909,7 @@ function deleteRec(type) {
     if (type === 'recibo') {
       const r = getData('recibo_data').find(x => String(x.id) === String(currentId));
       if (r) liberarNumeroRecibo(r.numero);
+      eliminarHonorariosDeCaja(currentId);
     }
     deleteRecord(key, currentId);
   } else {
@@ -9119,7 +9203,7 @@ function renderCaja() {
     if(medio && (m.medio||'Efectivo') !== medio) return false;
     return true;
   });
-  filtered.sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  filtered.sort((a,b)=>(b._updatedAt||0)-(a._updatedAt||0) || b.fecha.localeCompare(a.fecha));
 
   const totalIng = filtered.filter(m=>m.tipo==='ingreso').reduce((s,m)=>s+(parseFloat(m.monto)||0),0);
   const totalEgr = filtered.filter(m=>m.tipo==='egreso').reduce((s,m)=>s+(parseFloat(m.monto)||0),0);
