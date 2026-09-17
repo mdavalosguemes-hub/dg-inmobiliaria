@@ -901,12 +901,14 @@
         <button class="btn btn-primary" onclick="newMovimiento('ingreso')">+ Ingreso</button>
         <button class="btn btn-secondary" onclick="newMovimiento('egreso')">- Egreso</button>
         <button class="btn btn-gold" onclick="cierreDiario()">📋 Cierre del Día</button>
+        <button class="btn btn-gold" onclick="abrirArqueoCierre()">🔒 Arqueo y Cierre de Caja</button>
       </div>
     </div>
     <div class="content">
       <div class="section-tabs">
         <button class="section-tab active" onclick="switchSectionTab(this,'caja-diaria')">Movimientos</button>
         <button class="section-tab" onclick="switchSectionTab(this,'caja-balance')">Balance Mensual</button>
+        <button class="section-tab" onclick="switchSectionTab(this,'caja-cierres');renderCierresCaja()">Cierres de Caja</button>
       </div>
       <div id="caja-diaria" class="section-pane active">
         <div class="stats-grid" id="stats-caja"></div>
@@ -952,6 +954,17 @@
           <button class="btn btn-secondary" onclick="exportBalancePDF()">🖨 Imprimir Balance</button>
         </div>
         <div id="balance-content" style="margin-top:16px"></div>
+      </div>
+      <div id="caja-cierres" class="section-pane">
+        <div class="table-wrapper" style="margin-top:12px">
+          <div class="table-header-bar"><span id="cierres-caja-count-info"></span></div>
+          <div style="overflow-x:auto"><table><thead><tr>
+            <th>Fecha</th>
+            <th>Saldo final Efectivo</th><th>Contado</th><th>Dif. Efvo.</th>
+            <th>Saldo final Transf.</th><th>Verificado</th><th>Dif. Transf.</th>
+            <th>Acciones</th>
+          </tr></thead><tbody id="tbody-cierres-caja"></tbody></table></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1461,6 +1474,31 @@
     </div>
   </div>
 </div>
+
+<!-- ==================== MODAL ARQUEO Y CIERRE DE CAJA ==================== -->
+<div class="modal-overlay" id="modal-arqueo">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-header">
+      <h3 id="modal-arqueo-title">🔒 Arqueo y Cierre de Caja</h3>
+      <button class="modal-close" onclick="closeModal('modal-arqueo')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #e2e8f0">
+        <label style="font-weight:600;font-size:13px;white-space:nowrap">📅 Fecha a cerrar:</label>
+        <input type="date" id="arqueo-fecha-input" class="form-control" style="max-width:180px" onchange="calcularArqueo()">
+      </div>
+      <div id="arqueo-ya-cerrado" style="display:none;background:#fdecea;border:1px solid #f5c6c6;color:#a33;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px">
+        ⚠️ Ya existe un cierre para esta fecha. No se puede cerrar dos veces el mismo día.
+      </div>
+      <div id="arqueo-content"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-arqueo')">Cancelar</button>
+      <button class="btn btn-primary" id="btn-confirmar-cierre" onclick="confirmarArqueoCierre()">🔒 Confirmar Cierre</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-propiedad">
   <div class="modal" style="max-width:880px">
     <div class="modal-header"><h3 id="modal-prop-title">Propiedad</h3><button class="modal-close" onclick="closeModal('modal-propiedad')">✕</button></div>
@@ -9171,6 +9209,199 @@ function deleteMovimiento() {
   deleteRecord('caja_data', currentMovId);
   closeModal('modal-movimiento');
   renderCaja();
+}
+
+// ============================================================
+// ARQUEO Y CIERRE DE CAJA (por día, separado Efectivo / Transferencias)
+// No reemplaza nada de lo existente: usa los mismos movimientos de
+// caja_data (visibles(), sin duplicar información) y agrega una colección
+// nueva "cierres_caja" para guardar el resultado de cada cierre.
+// ============================================================
+function getCierresCaja() { return visibles(getData('cierres_caja') || []); }
+
+// Suma ingresos/egresos del día, separados por medio, a partir de los
+// movimientos YA existentes en Caja (no se inventa ni duplica nada).
+function movimientosDelDiaPorMedio(fecha) {
+  const data = visibles(getData('caja_data') || []).filter(m => m.fecha === fecha);
+  const calc = medio => {
+    const delMedio = data.filter(m => (m.medio || 'Efectivo') === medio);
+    const ingresos = delMedio.filter(m => m.tipo === 'ingreso').reduce((s,m)=>s+(parseFloat(m.monto)||0),0);
+    const egresos  = delMedio.filter(m => m.tipo === 'egreso').reduce((s,m)=>s+(parseFloat(m.monto)||0),0);
+    return { ingresos, egresos };
+  };
+  return { efectivo: calc('Efectivo'), transferencia: calc('Transferencia') };
+}
+
+// Saldo inicial del día = saldo final del ÚLTIMO cierre confirmado con
+// fecha anterior a la indicada (si no hay ningún cierre previo, arranca en 0).
+function saldoInicialParaFecha(fecha) {
+  const anteriores = getCierresCaja().filter(c => c.fecha < fecha).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  if (!anteriores.length) return { efectivo: 0, transferencia: 0 };
+  const ultimo = anteriores[anteriores.length - 1];
+  return { efectivo: parseFloat(ultimo.saldoFinalEfectivo)||0, transferencia: parseFloat(ultimo.saldoFinalTransferencia)||0 };
+}
+
+function abrirArqueoCierre() {
+  const hoy = new Date().toISOString().split('T')[0];
+  document.getElementById('arqueo-fecha-input').value = hoy;
+  calcularArqueo();
+  openModal('modal-arqueo');
+}
+
+function calcularArqueo() {
+  const fecha = document.getElementById('arqueo-fecha-input').value;
+  const fmt = n => '$ ' + (parseFloat(n)||0).toLocaleString('es-AR');
+  const yaCerrado = getCierresCaja().find(c => c.fecha === fecha);
+  document.getElementById('arqueo-ya-cerrado').style.display = yaCerrado ? 'block' : 'none';
+  document.getElementById('btn-confirmar-cierre').style.display = yaCerrado ? 'none' : 'inline-flex';
+  if (!fecha) { document.getElementById('arqueo-content').innerHTML=''; return; }
+
+  const inicial = saldoInicialParaFecha(fecha);
+  const mov = movimientosDelDiaPorMedio(fecha);
+  const finalEfectivo = inicial.efectivo + mov.efectivo.ingresos - mov.efectivo.egresos;
+  const finalTransferencia = inicial.transferencia + mov.transferencia.ingresos - mov.transferencia.egresos;
+
+  const filaMedio = (titulo, ini, ing, egr, fin, idContado) => `
+    <div style="background:var(--bg-subtle);border-radius:8px;padding:14px;margin-bottom:12px">
+      <div style="font-weight:700;color:var(--primary);margin-bottom:8px;font-size:13px;text-transform:uppercase;letter-spacing:.5px">${titulo}</div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse">
+        <tr><td style="padding:3px 0">Saldo inicial</td><td style="text-align:right;font-weight:600">${fmt(ini)}</td></tr>
+        <tr><td style="padding:3px 0;color:#27ae60">Ingresos del día</td><td style="text-align:right;font-weight:600;color:#27ae60">+ ${fmt(ing)}</td></tr>
+        <tr><td style="padding:3px 0;color:#e74c3c">Egresos del día</td><td style="text-align:right;font-weight:600;color:#e74c3c">- ${fmt(egr)}</td></tr>
+        <tr><td style="padding:6px 0;font-weight:700;border-top:1px solid #ddd">Saldo final según sistema</td><td style="text-align:right;font-weight:700;border-top:1px solid #ddd">${fmt(fin)}</td></tr>
+      </table>
+      <div style="margin-top:10px;display:flex;align-items:center;gap:10px">
+        <label style="font-size:12px;font-weight:600;white-space:nowrap">Importe verificado ($):</label>
+        <input type="number" class="form-control" id="${idContado}" placeholder="${Math.round(fin)}" oninput="actualizarDiferenciasArqueo()" style="max-width:160px">
+        <span id="${idContado}-dif" style="font-weight:700;font-size:13px"></span>
+      </div>
+    </div>`;
+
+  document.getElementById('arqueo-content').innerHTML =
+    filaMedio('💵 Efectivo', inicial.efectivo, mov.efectivo.ingresos, mov.efectivo.egresos, finalEfectivo, 'arqueo-contado-efectivo') +
+    filaMedio('🏦 Transferencias', inicial.transferencia, mov.transferencia.ingresos, mov.transferencia.egresos, finalTransferencia, 'arqueo-contado-transferencia');
+
+  // Guardar los saldos calculados en el propio DOM (data-*) para no
+  // recalcular con datos distintos entre el cálculo y la confirmación.
+  const cont = document.getElementById('arqueo-content');
+  cont.dataset.iniEfvo = inicial.efectivo; cont.dataset.ingEfvo = mov.efectivo.ingresos; cont.dataset.egrEfvo = mov.efectivo.egresos; cont.dataset.finEfvo = finalEfectivo;
+  cont.dataset.iniTrf = inicial.transferencia; cont.dataset.ingTrf = mov.transferencia.ingresos; cont.dataset.egrTrf = mov.transferencia.egresos; cont.dataset.finTrf = finalTransferencia;
+  actualizarDiferenciasArqueo();
+}
+
+function actualizarDiferenciasArqueo() {
+  const cont = document.getElementById('arqueo-content');
+  if (!cont || !cont.dataset.finEfvo) return;
+  const fmt = n => (n>=0?'+ ':'- ') + '$ ' + Math.abs(n).toLocaleString('es-AR');
+  const calcDif = (idInput, saldoSistema) => {
+    const el = document.getElementById(idInput);
+    const contadoStr = el ? el.value : '';
+    const contado = contadoStr === '' ? parseFloat(saldoSistema) : parseFloat(contadoStr);
+    const dif = contado - parseFloat(saldoSistema);
+    const difEl = document.getElementById(idInput+'-dif');
+    if (difEl) {
+      difEl.textContent = dif === 0 ? 'Diferencia: $ 0' : 'Diferencia: ' + fmt(dif);
+      difEl.style.color = dif === 0 ? '#27ae60' : '#e74c3c';
+    }
+    return contado;
+  };
+  calcDif('arqueo-contado-efectivo', cont.dataset.finEfvo);
+  calcDif('arqueo-contado-transferencia', cont.dataset.finTrf);
+}
+
+function confirmarArqueoCierre() {
+  const fecha = document.getElementById('arqueo-fecha-input').value;
+  if (!fecha) { showToast('Eleg\u00ed una fecha', 'error'); return; }
+  if (getCierresCaja().find(c => c.fecha === fecha)) {
+    showToast('Ya existe un cierre para esta fecha', 'error'); return;
+  }
+  const cont = document.getElementById('arqueo-content');
+  if (!cont || !cont.dataset.finEfvo) { showToast('Calcul\u00e1 el arqueo primero', 'error'); return; }
+  if (!confirm('¿Confirmar el cierre de caja del ' + fecha + '? Esta acción no se puede deshacer ni duplicar para esta fecha.')) return;
+
+  const efEl = document.getElementById('arqueo-contado-efectivo');
+  const trEl = document.getElementById('arqueo-contado-transferencia');
+  const saldoFinalEfvo = parseFloat(cont.dataset.finEfvo);
+  const saldoFinalTrf  = parseFloat(cont.dataset.finTrf);
+  const contadoEfvo = (efEl && efEl.value !== '') ? parseFloat(efEl.value) : saldoFinalEfvo;
+  const contadoTrf  = (trEl && trEl.value !== '') ? parseFloat(trEl.value) : saldoFinalTrf;
+
+  const cierre = {
+    id: 'CC' + Date.now(),
+    fecha,
+    saldoInicialEfectivo: parseFloat(cont.dataset.iniEfvo),
+    ingresosEfectivo: parseFloat(cont.dataset.ingEfvo),
+    egresosEfectivo: parseFloat(cont.dataset.egrEfvo),
+    saldoFinalEfectivo: saldoFinalEfvo,
+    efectivoContado: contadoEfvo,
+    diferenciaEfectivo: contadoEfvo - saldoFinalEfvo,
+    saldoInicialTransferencia: parseFloat(cont.dataset.iniTrf),
+    ingresosTransferencia: parseFloat(cont.dataset.ingTrf),
+    egresosTransferencia: parseFloat(cont.dataset.egrTrf),
+    saldoFinalTransferencia: saldoFinalTrf,
+    transferenciaContada: contadoTrf,
+    diferenciaTransferencia: contadoTrf - saldoFinalTrf,
+    _updatedAt: nowTS()
+  };
+  const data = getData('cierres_caja') || [];
+  data.push(cierre);
+  setData('cierres_caja', data);
+  closeModal('modal-arqueo');
+  showToast('Cierre de caja del ' + fecha + ' confirmado ✓');
+  const pane = document.getElementById('caja-cierres');
+  if (pane && pane.classList.contains('active')) renderCierresCaja();
+}
+
+function renderCierresCaja() {
+  const data = getCierresCaja().sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const fmt = n => '$ ' + (parseFloat(n)||0).toLocaleString('es-AR');
+  document.getElementById('cierres-caja-count-info').textContent = data.length + ' cierre(s) registrado(s)';
+  document.getElementById('tbody-cierres-caja').innerHTML = data.length ? data.map(c => `
+    <tr>
+      <td>${new Date(c.fecha+'T00:00:00').toLocaleDateString('es-AR')}</td>
+      <td>${fmt(c.saldoFinalEfectivo)}</td>
+      <td>${fmt(c.efectivoContado)}</td>
+      <td style="color:${c.diferenciaEfectivo===0?'#27ae60':'#e74c3c'};font-weight:600">${fmt(c.diferenciaEfectivo)}</td>
+      <td>${fmt(c.saldoFinalTransferencia)}</td>
+      <td>${fmt(c.transferenciaContada)}</td>
+      <td style="color:${c.diferenciaTransferencia===0?'#27ae60':'#e74c3c'};font-weight:600">${fmt(c.diferenciaTransferencia)}</td>
+      <td><button class="btn btn-secondary btn-sm" onclick="imprimirCierreCaja('${c.id}')">🖨 PDF</button></td>
+    </tr>`).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:30px">Todavía no hay cierres de caja registrados.</td></tr>';
+}
+
+function imprimirCierreCaja(id) {
+  const c = getCierresCaja().find(x => String(x.id) === String(id));
+  if (!c) return;
+  const fmt = n => '$ ' + (parseFloat(n)||0).toLocaleString('es-AR');
+  const fechaLegible = new Date(c.fecha+'T00:00:00').toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const movsDia = visibles(getData('caja_data')||[]).filter(m => m.fecha === c.fecha);
+
+  const bloqueMedio = (titulo, ini, ing, egr, fin, contado, dif) => `
+    <div style="margin-bottom:18px">
+      <div style="font-weight:700;color:#1a4480;font-size:13px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${titulo}</div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse">
+        <tr><td style="padding:4px 0">Saldo inicial</td><td class="money">${fmt(ini)}</td></tr>
+        <tr><td style="padding:4px 0;color:#27ae60">Ingresos</td><td class="money" style="color:#27ae60">+ ${fmt(ing)}</td></tr>
+        <tr><td style="padding:4px 0;color:#c0392b">Egresos</td><td class="money" style="color:#c0392b">- ${fmt(egr)}</td></tr>
+        <tr><td style="padding:6px 0;font-weight:700;border-top:1px solid #ccc">Saldo final (sistema)</td><td class="money" style="font-weight:700;border-top:1px solid #ccc">${fmt(fin)}</td></tr>
+        <tr><td style="padding:4px 0">Importe verificado</td><td class="money">${fmt(contado)}</td></tr>
+        <tr><td style="padding:4px 0;font-weight:700">Diferencia</td><td class="money" style="font-weight:700;color:${dif===0?'#27ae60':'#c0392b'}">${fmt(dif)}</td></tr>
+      </table>
+    </div>`;
+
+  let html = buildHeaderHTML({tituloDoc:'Arqueo y Cierre de Caja'});
+  html += `<div style="text-align:center;font-size:14px;font-weight:700;text-transform:capitalize;margin:10px 0 18px;color:#1a4480">${fechaLegible}</div>`;
+  html += bloqueMedio('💵 Efectivo', c.saldoInicialEfectivo, c.ingresosEfectivo, c.egresosEfectivo, c.saldoFinalEfectivo, c.efectivoContado, c.diferenciaEfectivo);
+  html += bloqueMedio('🏦 Transferencias', c.saldoInicialTransferencia, c.ingresosTransferencia, c.egresosTransferencia, c.saldoFinalTransferencia, c.transferenciaContada, c.diferenciaTransferencia);
+
+  if (movsDia.length) {
+    html += `<div style="font-weight:700;color:#1a4480;font-size:13px;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px">Resumen de movimientos del día</div>
+      <table style="width:100%;font-size:12px;border-collapse:collapse">
+        <thead><tr><th style="text-align:left;padding:4px 0;border-bottom:1px solid #ccc">Concepto</th><th style="text-align:left;padding:4px 0;border-bottom:1px solid #ccc">Medio</th><th style="text-align:right;padding:4px 0;border-bottom:1px solid #ccc">Monto</th></tr></thead>
+        <tbody>${movsDia.map(m => `<tr><td style="padding:3px 0">${m.tipo==='ingreso'?'+ ':'- '}${m.concepto||'-'}</td><td style="padding:3px 0">${m.medio||'Efectivo'}</td><td class="money">${fmt(m.monto)}</td></tr>`).join('')}</tbody>
+      </table>`;
+  }
+  openPrintWindow(html, 'Cierre de Caja - ' + c.fecha, 'cierre-caja');
 }
 
 function cierreDiario() {
