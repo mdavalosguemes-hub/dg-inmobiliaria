@@ -2225,7 +2225,11 @@ function calcPunitorios() {
   if (!periodo || !alquiler || !fechaStr) { punitoriosEl.value = 0; calcTotal(); return; }
 
   const fechaRecibo = new Date(fechaStr + 'T00:00:00');
-  const vencimiento = new Date(periodo.anio, periodo.mes - 1, 10);
+  // Vencimiento = último día del mes ANTERIOR al período (equivale a "día 0"
+  // del mes del período), para que los días de atraso se cuenten desde el
+  // día 1 de ese mes: ej. si hoy es el 17 y el período es el mismo mes,
+  // da exactamente 17 días de atraso.
+  const vencimiento = new Date(periodo.anio, periodo.mes - 1, 0);
   if (isNaN(fechaRecibo) || isNaN(vencimiento)) { punitoriosEl.value = 0; calcTotal(); return; }
 
   const MS_DIA = 24 * 60 * 60 * 1000;
