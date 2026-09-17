@@ -9397,8 +9397,20 @@ function imprimirCierreCaja(id) {
   if (movsDia.length) {
     html += `<div style="font-weight:700;color:#1a4480;font-size:13px;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px">Resumen de movimientos del día</div>
       <table style="width:100%;font-size:12px;border-collapse:collapse">
-        <thead><tr><th style="text-align:left;padding:4px 0;border-bottom:1px solid #ccc">Concepto</th><th style="text-align:left;padding:4px 0;border-bottom:1px solid #ccc">Medio</th><th style="text-align:right;padding:4px 0;border-bottom:1px solid #ccc">Monto</th></tr></thead>
-        <tbody>${movsDia.map(m => `<tr><td style="padding:3px 0">${m.tipo==='ingreso'?'+ ':'- '}${m.concepto||'-'}</td><td style="padding:3px 0">${m.medio||'Efectivo'}</td><td class="money">${fmt(m.monto)}</td></tr>`).join('')}</tbody>
+        <thead><tr>
+          <th style="text-align:left;padding:4px 0;border-bottom:1px solid #ccc">Concepto</th>
+          <th style="text-align:left;padding:4px 0;border-bottom:1px solid #ccc">Carpeta</th>
+          <th style="text-align:left;padding:4px 0;border-bottom:1px solid #ccc">Medio</th>
+          <th style="text-align:right;padding:4px 0;border-bottom:1px solid #ccc">Monto</th>
+          <th style="text-align:left;padding:4px 0;border-bottom:1px solid #ccc">Observaciones</th>
+        </tr></thead>
+        <tbody>${movsDia.map(m => `<tr>
+          <td style="padding:3px 0">${m.tipo==='ingreso'?'+ ':'- '}${m.concepto||'-'}</td>
+          <td style="padding:3px 0">${m.carpeta||'-'}</td>
+          <td style="padding:3px 0">${m.medio||'Efectivo'}</td>
+          <td class="money">${fmt(m.monto)}</td>
+          <td style="padding:3px 0;color:#555">${m.obs||'-'}</td>
+        </tr>`).join('')}</tbody>
       </table>`;
   }
   openPrintWindow(html, 'Cierre de Caja - ' + c.fecha, 'cierre-caja');
