@@ -6555,7 +6555,17 @@ function renderRecibos() {
     return true;
   });
 
-  filtered.sort((a,b) => (b.numero||'') > (a.numero||'') ? 1 : -1);
+  // Ordenar por número de recibo, más reciente primero. Si comparten el
+  // mismo prefijo "AAAA-MM-" se compara la parte final como NÚMERO (no como
+  // texto), para que "...-100" quede después de "...-99" y no antes (como
+  // texto, "100" es "menor" que "99" porque el primer carácter, "1", es
+  // menor que "9").
+  filtered.sort((a,b) => {
+    const na = String(a.numero||''), nb = String(b.numero||'');
+    const ma = na.match(/^(.*-)(\d+)$/), mb = nb.match(/^(.*-)(\d+)$/);
+    if (ma && mb && ma[1] === mb[1]) return parseInt(mb[2],10) - parseInt(ma[2],10);
+    return nb > na ? 1 : (nb < na ? -1 : 0);
+  });
   const ps = PS.recibos; const tp = Math.ceil(filtered.length/ps.pp)||1; ps.p = Math.min(ps.p,tp);
   const slice = filtered.slice((ps.p-1)*ps.pp, ps.p*ps.pp);
   document.getElementById('recibo-count-info').textContent=`${filtered.length} recibo(s) \u00b7 Pr\u00f3ximo: ${getNextReciboNum()}`;
