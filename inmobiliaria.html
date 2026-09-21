@@ -9337,12 +9337,27 @@ function movimientosDelDiaPorMedio(fecha) {
 }
 
 // Saldo inicial del día = saldo final del ÚLTIMO cierre confirmado con
-// fecha anterior a la indicada (si no hay ningún cierre previo, arranca en 0).
+// fecha anterior a la indicada, más los movimientos sueltos de los días
+// intermedios (por si se saltearon días sin hacer el Arqueo formal). Si
+// nunca se hizo ningún cierre, suma todo el historial de movimientos desde
+// siempre hasta el día anterior a la fecha indicada.
 function saldoInicialParaFecha(fecha) {
   const anteriores = getCierresCaja().filter(c => c.fecha < fecha).sort((a,b)=>a.fecha.localeCompare(b.fecha));
-  if (!anteriores.length) return { efectivo: 0, transferencia: 0 };
-  const ultimo = anteriores[anteriores.length - 1];
-  return { efectivo: parseFloat(ultimo.saldoFinalEfectivo)||0, transferencia: parseFloat(ultimo.saldoFinalTransferencia)||0 };
+  let saldoEf = 0, saldoTr = 0, desde = null;
+  if (anteriores.length) {
+    const ultimo = anteriores[anteriores.length - 1];
+    saldoEf = parseFloat(ultimo.saldoFinalEfectivo) || 0;
+    saldoTr = parseFloat(ultimo.saldoFinalTransferencia) || 0;
+    desde = ultimo.fecha;
+  }
+  // Movimientos sueltos entre el último cierre (exclusive) y la fecha
+  // indicada (exclusive): puentea cualquier día salteado sin Arqueo.
+  const movs = visibles(getData('caja_data') || []).filter(m => m.fecha < fecha && (!desde || m.fecha > desde));
+  movs.forEach(m => {
+    const monto = (parseFloat(m.monto) || 0) * (m.tipo === 'ingreso' ? 1 : -1);
+    if ((m.medio || 'Efectivo') === 'Efectivo') saldoEf += monto; else saldoTr += monto;
+  });
+  return { efectivo: saldoEf, transferencia: saldoTr };
 }
 
 function abrirArqueoCierre() {
@@ -9535,20 +9550,43 @@ function ejecutarCierreDia() {
   const fechaSel = document.getElementById('cierre-fecha-input')?.value;
   const fecha = fechaSel || new Date().toISOString().split('T')[0];
   const medioSel = document.getElementById('cierre-medio-input')?.value || '';
-  // fecha ya está en el mismo modal
+
+  const fmt = n => '$ '+n.toLocaleString('es-AR');
+  const fechaLegible = new Date(fecha+'T00:00:00').toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const fechaAnteriorLegible = new Date(new Date(fecha+'T00:00:00').getTime() - 86400000).toLocaleDateString('es-AR');
+  const tituloMedio = medioSel ? ` · ${medioSel}` : '';
+
+  // Saldo anterior (hasta el día previo inclusive) + movimientos de HOY,
+  // separado por Efectivo y Transferencias (usa el mismo cálculo que el
+  // Arqueo y Cierre de Caja, para que ambos siempre coincidan).
+  const inicial = saldoInicialParaFecha(fecha);
+  const movPorMedio = movimientosDelDiaPorMedio(fecha);
+  const bloqueMedio = (titulo, ini, ing, egr) => {
+    const final = ini + ing - egr;
+    return `<div style="background:var(--bg-subtle,#f5f7fa);border-radius:8px;padding:14px;margin-bottom:14px">
+      <div style="font-weight:700;color:#1a4480;margin-bottom:8px;font-size:12.5px;text-transform:uppercase;letter-spacing:.5px">${titulo}</div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse">
+        <tr><td style="padding:4px 0;color:#555">Saldo anterior <span style="font-size:11px;color:#999">(hasta ${fechaAnteriorLegible} inclusive)</span></td><td style="text-align:right;font-weight:600">${fmt(ini)}</td></tr>
+        <tr><td style="padding:4px 0;color:#27ae60">Ingresos de hoy</td><td style="text-align:right;font-weight:600;color:#27ae60">+ ${fmt(ing)}</td></tr>
+        <tr><td style="padding:4px 0;color:#e74c3c">Egresos de hoy</td><td style="text-align:right;font-weight:600;color:#e74c3c">- ${fmt(egr)}</td></tr>
+        <tr><td style="padding:8px 0;font-weight:700;border-top:2px solid #1a4480">Total en Caja hoy</td><td style="text-align:right;font-weight:700;border-top:2px solid #1a4480;color:${final>=0?'#27ae60':'#e74c3c'}">${fmt(final)}</td></tr>
+      </table>
+    </div>`;
+  };
+
+  let html = `<div style="font-family:'Merriweather',serif;font-size:16px;text-align:center;margin-bottom:6px;color:#1a4480;font-weight:700">Cierre del Día${tituloMedio}</div>
+    <div style="text-align:center;font-size:13px;color:#555;margin-bottom:18px;text-transform:capitalize">${fechaLegible}</div>`;
+
+  if (!medioSel || medioSel === 'Efectivo') html += bloqueMedio('💵 Efectivo', inicial.efectivo, movPorMedio.efectivo.ingresos, movPorMedio.efectivo.egresos);
+  if (!medioSel || medioSel === 'Transferencia') html += bloqueMedio('🏦 Transferencias', inicial.transferencia, movPorMedio.transferencia.ingresos, movPorMedio.transferencia.egresos);
 
   const data = visibles(getData('caja_data')||[]).filter(m => m.fecha === fecha && (!medioSel || (m.medio||'Efectivo') === medioSel));
   const ingresos = data.filter(m => m.tipo === 'ingreso');
   const egresos  = data.filter(m => m.tipo === 'egreso');
   const totalIng = ingresos.reduce((s,m) => s+(parseFloat(m.monto)||0), 0);
   const totalEgr = egresos.reduce((s,m)  => s+(parseFloat(m.monto)||0), 0);
-  const saldo = totalIng - totalEgr;
-  const fmt = n => '$ '+n.toLocaleString('es-AR');
-  const fechaLegible = new Date(fecha+'T00:00:00').toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  const tituloMedio = medioSel ? ` · ${medioSel}` : '';
 
-  let html = `<div style="font-family:'Merriweather',serif;font-size:16px;text-align:center;margin-bottom:16px;color:#1a4480;font-weight:700">Cierre del Día${tituloMedio}</div>
-    <div style="text-align:center;font-size:13px;color:#555;margin-bottom:20px;text-transform:capitalize">${fechaLegible}</div>`;
+  html += `<div style="font-weight:700;color:#1a4480;font-size:12.5px;text-transform:uppercase;letter-spacing:.5px;margin:16px 0 8px">Detalle de movimientos de hoy</div>`;
 
   if (ingresos.length) {
     html += `<div style="font-weight:700;color:#27ae60;margin-bottom:8px;font-size:13px;text-transform:uppercase;letter-spacing:.5px">Ingresos</div>
@@ -9568,11 +9606,7 @@ function ejecutarCierreDia() {
     });
     html += `<tr><td style="padding:8px 0;font-weight:700;border-top:2px solid #e74c3c">Total Egresos</td><td style="text-align:right;font-weight:700;color:#e74c3c;border-top:2px solid #e74c3c">${fmt(totalEgr)}</td></tr></table>`;
   }
-  html += `<div style="background:${saldo>=0?'#e8f8ef':'#fdecea'};border-radius:8px;padding:16px;text-align:center;margin-top:8px;border:1px solid ${saldo>=0?'#a8dfc0':'#f5c6c6'}">
-    <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;color:#555">Saldo del Día</div>
-    <div style="font-size:26px;font-weight:700;color:${saldo>=0?'#27ae60':'#e74c3c'}">${fmt(saldo)}</div>
-  </div>`;
-  if (!data.length) html = `<p style="text-align:center;color:#5a6e82;padding:30px 0">Sin movimientos registrados para esta fecha.</p>`;
+  if (!data.length) html += `<p style="text-align:center;color:#5a6e82;padding:20px 0">Sin movimientos registrados para esta fecha.</p>`;
 
   document.getElementById('cierre-content').innerHTML = html;
   openModal('modal-cierre');
