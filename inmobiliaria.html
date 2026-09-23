@@ -2914,7 +2914,7 @@ function showPage(name) {
     renovaciones: renderRenovaciones,
     'ajustes-prop': function(){ initAjustePropPage(); renderAjusteProp(); },
     ajustes: renderAjustes,
-    caja: renderCaja,
+    caja: () => { renderCaja(); refrescarMpPendientesCache(true); },
     importexport: () => { initAutoBackupPanel(); initExportPropAnioSelect(); },
     escritura: () => { initEscrituraPage(); },
     'fichas-venta': () => { renderFichasVenta(); },
@@ -4554,7 +4554,7 @@ function calcComisionGastos() {
   }
 }
 
-function newProp() { currentId=null; currentType='propiedad'; document.getElementById('modal-prop-title').textContent='Nueva Propiedad'; document.getElementById('btn-del-prop').style.display='none'; ['carpeta','dir','tipo','m2','uso','estado','obs','finicio','ffin','meses','inicial','mpago','ajuste','proxact','indice','alquiler','comision','gastos','api','tgi','aguas','expensas','exp_tel','exp_mail','exp_dir','exp_banco','exp_nrocuenta','exp_cbu','exp_alias','inq_nombre','inq_apellido','inq_tel','inq_mail','inq_dni','deso_fecha','deso_tgi','deso_api','deso_aguas','deso_epe','deso_gas','deso_expensas','deso_obs'].forEach(k=>{const el=document.getElementById('p_'+k);if(el)el.value='';}); document.getElementById('modal-propiedad').querySelectorAll('.modal-tab')[0].click(); document.getElementById('p_comision').dataset.manual='0'; document.getElementById('p_gastos').dataset.manual='0'; openModal('modal-propiedad'); }
+function newProp() { currentId=null; currentType='propiedad'; document.getElementById('modal-prop-title').textContent='Nueva Propiedad'; document.getElementById('btn-del-prop').style.display='none'; ['carpeta','dir','tipo','m2','uso','estado','obs','finicio','ffin','meses','inicial','mpago','ajuste','proxact','indice','alquiler','comision','gastos','api','tgi','aguas','expensas','exp_tel','exp_mail','exp_dir','exp_banco','exp_nrocuenta','exp_cbu','exp_alias','inq_nombre','inq_apellido','inq_tel','inq_mail','inq_dni','deso_fecha','deso_tgi','deso_api','deso_aguas','deso_epe','deso_gas','deso_expensas','deso_obs'].forEach(k=>{const el=document.getElementById('p_'+k);if(el)el.value='';}); document.getElementById('modal-propiedad').querySelectorAll('.modal-tab')[0].click(); document.getElementById('p_comision').dataset.manual='0'; document.getElementById('p_gastos').dataset.manual='0'; cargarPropietarioDesdeProp(); openModal('modal-propiedad'); }
 function editProp(id) {
   const p=getData('prop_data').find(x=>String(x.id)===String(id)); if(!p) return;
   currentId=id; currentType='propiedad';
@@ -4572,7 +4572,15 @@ function editProp(id) {
   // Comisión actual y Gastos admin actuales se recalculan solos (8% y 3%, redondeado hacia arriba a $100).
   // Si el usuario edita a mano Comisión o Gastos, el propio oninput de esos campos los marca manual='1'
   // y dejan de recalcularse automáticamente en esta sesión de edición.
-  document.getElementById('p_comision').dataset.manual='0'; document.getElementById('p_gastos').dataset.manual='0'; openModal('modal-propiedad');
+  document.getElementById('p_comision').dataset.manual='0'; document.getElementById('p_gastos').dataset.manual='0';
+  // MUY IMPORTANTE: recargar siempre los datos de la pestaña "Propietario"
+  // de ESTA propiedad puntual, sin esperar a que el usuario haga clic en esa
+  // pestaña. Antes, si no se entraba ahí, quedaban pegados los datos del
+  // propietario de la ÚLTIMA propiedad que se había mirado, y al guardar se
+  // los pisaba encima del propietario real de esta propiedad (así fue como
+  // se corrompieron los datos de varios propietarios reales).
+  cargarPropietarioDesdeProp();
+  openModal('modal-propiedad');
 }
 // ── Control Impuestos ───────────────────────────────────────────────────────
 function renderControlImp() {
@@ -8128,6 +8136,14 @@ setInterval(() => {
   } catch (e) {}
 }, 5 * 60 * 1000);
 
+// Revisa cada 2 minutos si hay pendientes nuevos de Mercado Pago (temporizador
+// independiente: NO se dispara desde dentro de renderCaja, para no generar un
+// bucle de refrescos).
+setInterval(() => {
+  if (!currentUser) return;
+  refrescarMpPendientesCache(true);
+}, 2 * 60 * 1000);
+
 // ============================================================
 // INIT
 // ============================================================
@@ -9241,10 +9257,28 @@ function renderCaja() {
     <div class="stat-card"><div class="stat-value" style="color:${saldoTransferencia>=0?'#1a4480':'#e74c3c'}">$${saldoTransferencia.toLocaleString('es-AR')}</div><div class="stat-label">Saldo Transferencia</div></div>
     <div class="stat-card" style="border:1px solid var(--accent)"><div class="stat-value" style="color:#1a4480">$${saldoGeneral.toLocaleString('es-AR')}</div><div class="stat-label">Saldo Total (todos los movimientos)</div></div>
   `;
-  document.getElementById('caja-count-info').textContent = `${filtered.length} movimientos`;
-  document.getElementById('tbody-caja').innerHTML = filtered.length===0
-    ? '<tr><td colspan="8" style="padding:30px;text-align:center;color:#5a6e82">Sin movimientos. Registr\u00e1 el primero.</td></tr>'
-    : filtered.map(m=>`<tr>
+
+  // Pendientes de Mercado Pago: se muestran resaltados, intercalados por
+  // fecha con los movimientos reales, con botones ✓/✕ en la misma fila (no
+  // se suman a los totales de arriba hasta que se acepten de verdad).
+  const pendientesFilas = _mpPendientesCache
+    .filter(p => !fecha || String(p.fecha).slice(0,10) === fecha)
+    .map(p => `<tr style="background:#fff8e1">
+        <td>${String(p.fecha).slice(0,10)}</td>
+        <td><span style="background:#ffe9a8;color:#8a6d00;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">🅿️ MP · ${p.tipo==='ingreso'?'Ingreso':'Egreso'}</span></td>
+        <td><span style="background:#e3edff;color:#1a4480;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">Transferencia</span></td>
+        <td>${p.descripcion||'Mercado Pago'}</td>
+        <td>-</td>
+        <td style="font-weight:600">$${(parseFloat(p.monto)||0).toLocaleString('es-AR')}</td>
+        <td style="color:#5a6e82;font-size:12px">${p.entidad||''} · sin confirmar</td>
+        <td style="white-space:nowrap">
+          <button class="btn-icon" title="Aceptar" onclick="aceptarMovimientoMP('${p.id}')">✅</button>
+          <button class="btn-icon" title="Rechazar" onclick="rechazarMovimientoMP('${p.id}')">❌</button>
+        </td>
+      </tr>`);
+
+  document.getElementById('caja-count-info').textContent = `${filtered.length} movimientos` + (pendientesFilas.length ? ` · ${pendientesFilas.length} de Mercado Pago sin confirmar` : '');
+  const filasReales = filtered.map(m=>`<tr>
         <td>${m.fecha||''}</td>
         <td><span style="background:${m.tipo==='ingreso'?'#e8f8ef':'#fdecea'};color:${m.tipo==='ingreso'?'#27ae60':'#e74c3c'};padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">${m.tipo==='ingreso'?'Ingreso':'Egreso'}</span></td>
         <td><span style="background:${(m.medio||'Efectivo')==='Efectivo'?'#fff4d9':'#e3edff'};color:${(m.medio||'Efectivo')==='Efectivo'?'#a87800':'#1a4480'};padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">${m.medio||'Efectivo'}</span></td>
@@ -9253,7 +9287,11 @@ function renderCaja() {
         <td style="font-weight:600">$${(parseFloat(m.monto)||0).toLocaleString('es-AR')}</td>
         <td style="color:#5a6e82;font-size:12px">${m.obs||''}</td>
         <td><button class="btn-icon" onclick="editMovimiento('${m.id}')">\u270f\ufe0f</button></td>
-      </tr>`).join('');
+      </tr>`);
+  const todasLasFilas = pendientesFilas.concat(filasReales);
+  document.getElementById('tbody-caja').innerHTML = todasLasFilas.length===0
+    ? '<tr><td colspan="8" style="padding:30px;text-align:center;color:#5a6e82">Sin movimientos. Registr\u00e1 el primero.</td></tr>'
+    : todasLasFilas.join('');
 }
 
 function newMovimiento(tipo) {
@@ -9469,6 +9507,66 @@ function confirmarArqueoCierre() {
   showToast('Cierre de caja del ' + fecha + ' confirmado ✓');
   const pane = document.getElementById('caja-cierres');
   if (pane && pane.classList.contains('active')) renderCierresCaja();
+}
+
+// ============================================================
+// MERCADO PAGO (integrado directo en la lista de Movimientos, sin
+// pestaña aparte): cada pendiente aparece resaltado en el mismo listado,
+// con botones ✓ Aceptar / ✕ Rechazar en la misma fila.
+// ============================================================
+let _mpPendientesCache = [];
+let _mpActivo = false;
+
+async function refrescarMpPendientesCache(rerender) {
+  try {
+    const estado = await fetch(SERVER_URL + '/api/mp/estado').then(r => r.json());
+    _mpActivo = !!estado.activo;
+    if (!_mpActivo) { _mpPendientesCache = []; }
+    else {
+      const r = await fetch(SERVER_URL + '/api/mp/pendientes').then(r => r.json());
+      _mpPendientesCache = r.pendientes || [];
+    }
+  } catch (e) {
+    // Sin conexión momentánea: se deja la caché como estaba, no rompe la pantalla.
+  }
+  if (rerender) {
+    const pane = document.getElementById('caja-diaria');
+    if (pane && pane.classList.contains('active')) renderCaja();
+  }
+}
+
+async function sincronizarMercadoPagoAhora() {
+  showToast('Consultando Mercado Pago...');
+  try {
+    const r = await fetch(SERVER_URL + '/api/mp/sincronizar-ahora', { method: 'POST' }).then(r => r.json());
+    if (!r.ok) { showToast(r.motivo || 'No se pudo sincronizar', 'error'); return; }
+    showToast('Listo: ' + (r.nuevos||0) + ' movimiento(s) nuevo(s) revisados');
+    await refrescarMpPendientesCache(true);
+  } catch (e) {
+    showToast('No se pudo conectar con el servidor', 'error');
+  }
+}
+
+async function aceptarMovimientoMP(id) {
+  const p = _mpPendientesCache.find(x => String(x.id) === String(id));
+  if (!p) return;
+  const r = await fetch(SERVER_URL + '/api/mp/aprobar', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ id, tipo: p.tipo, concepto: p.descripcion, carpeta: '', monto: p.monto })
+  }).then(r => r.json());
+  if (!r.ok) { showToast(r.error || 'No se pudo aceptar', 'error'); return; }
+  showToast('Movimiento cargado en Caja ✓');
+  await loadAllFromServer();
+  await refrescarMpPendientesCache(true);
+}
+
+async function rechazarMovimientoMP(id) {
+  if (!confirm('¿Rechazar este movimiento de Mercado Pago? No se va a cargar en Caja.')) return;
+  await fetch(SERVER_URL + '/api/mp/descartar', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id})
+  });
+  showToast('Descartado');
+  await refrescarMpPendientesCache(true);
 }
 
 function renderCierresCaja() {
