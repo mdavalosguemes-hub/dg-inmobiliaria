@@ -55,8 +55,19 @@ async function initSchema() {
       descripcion TEXT,
       entidad TEXT,
       medio_sugerido TEXT,
+      cuenta_contraparte_id TEXT,
+      carpeta_sugerida TEXT,
       estado TEXT NOT NULL DEFAULT 'pendiente',
       raw JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    ALTER TABLE mp_pendientes ADD COLUMN IF NOT EXISTS cuenta_contraparte_id TEXT;
+    ALTER TABLE mp_pendientes ADD COLUMN IF NOT EXISTS carpeta_sugerida TEXT;
+    CREATE TABLE IF NOT EXISTS mp_cuentas_conocidas (
+      id_cuenta_mp TEXT PRIMARY KEY,
+      tipo TEXT NOT NULL,
+      nombre TEXT,
+      carpeta TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS mp_sync_estado (
@@ -627,6 +638,27 @@ async function mpGuardarEstado(key, value) {
   );
 }
 
+// El id de la cuenta propia de Mercado Pago (para saber si un pago fue a
+// favor o en contra: si el "collector" es esta cuenta -> Ingreso, si el
+// "payer" es esta cuenta -> Egreso). Se pide una sola vez y se cachea en
+// memoria, ya que no cambia.
+let _mpMiCuentaId = null;
+async function mpObtenerMiCuentaId() {
+  if (_mpMiCuentaId) return _mpMiCuentaId;
+  try {
+    const resp = await fetch('https://api.mercadopago.com/users/me', {
+      headers: { Authorization: 'Bearer ' + MP_ACCESS_TOKEN }
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    _mpMiCuentaId = data && data.id ? String(data.id) : null;
+    return _mpMiCuentaId;
+  } catch (e) {
+    console.error('No se pudo obtener la cuenta propia de Mercado Pago:', e);
+    return null;
+  }
+}
+
 async function sincronizarMercadoPago() {
   if (!MP_ACCESS_TOKEN) return { ok: false, motivo: 'Sin MP_ACCESS_TOKEN configurado (integración apagada)' };
   try {
@@ -634,6 +666,7 @@ async function sincronizarMercadoPago() {
     const desdeStr = await mpObtenerEstado('ultima_fecha_sincronizada', null);
     // Primera vez: traer solo los últimos 2 días, para no importar años de historial de una.
     const desde = desdeStr ? new Date(desdeStr) : new Date(ahora.getTime() - 2 * 24 * 60 * 60 * 1000);
+    const miCuentaId = await mpObtenerMiCuentaId();
 
     const url = new URL('https://api.mercadopago.com/v1/payments/search');
     url.searchParams.set('sort', 'date_created');
@@ -655,24 +688,53 @@ async function sincronizarMercadoPago() {
     let nuevos = 0;
     for (const p of pagos) {
       const id = String(p.id);
-      const monto = parseFloat(p.transaction_amount) || 0;
-      // No sabemos con certeza, para una cuenta personal, si el pago fue a
-      // favor o en contra sin más contexto: usamos el signo que reporta MP
-      // como pista, pero quien apruebe el movimiento en la web confirma el
-      // tipo definitivo (Ingreso/Egreso) antes de que cuente en Caja.
-      const tipoSugerido = (p.transaction_amount || 0) >= 0 ? 'ingreso' : 'egreso';
-      const entidad = (p.payer && (p.payer.email || p.payer.id)) || (p.additional_info && p.additional_info.payer && p.additional_info.payer.first_name) || '';
+      const monto = Math.abs(parseFloat(p.transaction_amount) || 0);
+      const collectorId = p.collector && p.collector.id != null ? String(p.collector.id) : null;
+      const payerId = p.payer_id != null ? String(p.payer_id) : null;
+
+      // Se compara contra la propia cuenta: si el que COBRA es esta cuenta,
+      // es un Ingreso; si el que PAGA es esta cuenta, es un Egreso. Solo si
+      // no se puede determinar (falta el dato o no coincide con ninguno de
+      // los dos), se usa el signo del monto como último recurso.
+      let tipoSugerido, cuentaContraparteId;
+      if (miCuentaId && collectorId === miCuentaId) {
+        tipoSugerido = 'ingreso'; cuentaContraparteId = payerId;
+      } else if (miCuentaId && payerId === miCuentaId) {
+        tipoSugerido = 'egreso'; cuentaContraparteId = collectorId;
+      } else {
+        tipoSugerido = (parseFloat(p.transaction_amount) || 0) >= 0 ? 'ingreso' : 'egreso';
+        cuentaContraparteId = (tipoSugerido === 'ingreso') ? payerId : collectorId;
+      }
+
+      // Si esa cuenta ya fue identificada antes (por el usuario, en un
+      // movimiento anterior), se completa sola la carpeta y el nombre.
+      let entidad = '';
+      let carpetaSugerida = '';
+      let descripcion = p.description || p.operation_type || 'Movimiento de Mercado Pago';
+      if (cuentaContraparteId) {
+        const { rows: conocidas } = await pool.query(
+          'SELECT * FROM mp_cuentas_conocidas WHERE id_cuenta_mp = $1', [cuentaContraparteId]
+        );
+        if (conocidas[0]) {
+          entidad = conocidas[0].nombre || '';
+          carpetaSugerida = conocidas[0].carpeta || '';
+          descripcion = conocidas[0].tipo === 'otro' ? (conocidas[0].nombre || descripcion) : descripcion;
+        }
+      }
+
       await pool.query(
-        `INSERT INTO mp_pendientes (id, fecha, tipo, monto, descripcion, entidad, medio_sugerido, raw)
-         VALUES ($1,$2,$3,$4,$5,$6,'Transferencia',$7)
+        `INSERT INTO mp_pendientes (id, fecha, tipo, monto, descripcion, entidad, medio_sugerido, cuenta_contraparte_id, carpeta_sugerida, raw)
+         VALUES ($1,$2,$3,$4,$5,$6,'Transferencia',$7,$8,$9)
          ON CONFLICT (id) DO NOTHING`,
         [
           id,
           (p.date_created || ahora.toISOString()).slice(0, 10),
           tipoSugerido,
-          Math.abs(monto),
-          p.description || p.operation_type || 'Movimiento de Mercado Pago',
+          monto,
+          descripcion,
           entidad,
+          cuentaContraparteId,
+          carpetaSugerida,
           JSON.stringify(p)
         ]
       );
@@ -708,9 +770,37 @@ app.post('/api/mp/sincronizar-ahora', async (req, res) => {
 // GET /api/mp/pendientes -> lista de movimientos todavía sin revisar
 app.get('/api/mp/pendientes', async (req, res) => {
   const { rows } = await pool.query(
-    "SELECT id, fecha, tipo, monto, descripcion, entidad, medio_sugerido FROM mp_pendientes WHERE estado = 'pendiente' ORDER BY fecha DESC, created_at DESC"
+    "SELECT id, fecha, tipo, monto, descripcion, entidad, medio_sugerido, cuenta_contraparte_id, carpeta_sugerida FROM mp_pendientes WHERE estado = 'pendiente' ORDER BY fecha DESC, created_at DESC"
   );
   res.json({ ok: true, pendientes: rows });
+});
+
+// GET /api/mp/cuentas-conocidas -> cuentas de Mercado Pago que ya se
+// identificaron antes (para mostrarlas si hace falta, o para no volver a
+// preguntar por la misma cuenta)
+app.get('/api/mp/cuentas-conocidas', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM mp_cuentas_conocidas ORDER BY created_at DESC');
+  res.json({ ok: true, cuentas: rows });
+});
+
+// POST /api/mp/cuentas-conocidas -> guarda a qué inquilino, propietario u
+// otra persona corresponde una cuenta de Mercado Pago, y actualiza con esos
+// datos cualquier movimiento pendiente que ya hubiera llegado de esa misma
+// cuenta (para que no haga falta identificarla dos veces).
+app.post('/api/mp/cuentas-conocidas', async (req, res) => {
+  const { id_cuenta_mp, tipo, nombre, carpeta } = req.body || {};
+  if (!id_cuenta_mp || !tipo) return res.status(400).json({ ok: false, error: 'Faltan datos (id_cuenta_mp, tipo)' });
+  await pool.query(
+    `INSERT INTO mp_cuentas_conocidas (id_cuenta_mp, tipo, nombre, carpeta) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (id_cuenta_mp) DO UPDATE SET tipo = EXCLUDED.tipo, nombre = EXCLUDED.nombre, carpeta = EXCLUDED.carpeta`,
+    [String(id_cuenta_mp), tipo, nombre || '', carpeta || '']
+  );
+  await pool.query(
+    `UPDATE mp_pendientes SET entidad = $2, carpeta_sugerida = $3
+     WHERE cuenta_contraparte_id = $1 AND estado = 'pendiente'`,
+    [String(id_cuenta_mp), nombre || '', carpeta || '']
+  );
+  res.json({ ok: true });
 });
 
 // POST /api/mp/descartar -> lo marca como descartado (nunca entra a Caja)
@@ -742,9 +832,9 @@ app.post('/api/mp/aprobar', async (req, res) => {
     // el pedido, para que esto no dependa de lo que mande el navegador.
     medio: 'Transferencia',
     concepto: concepto || pendiente.descripcion || 'Mercado Pago',
-    carpeta: carpeta || '',
+    carpeta: carpeta || pendiente.carpeta_sugerida || '',
     monto: monto !== undefined ? parseFloat(monto) : parseFloat(pendiente.monto),
-    obs: (obs ? obs + ' \u00b7 ' : '') + 'Importado de Mercado Pago',
+    obs: (pendiente.entidad ? pendiente.entidad + ' \u00b7 ' : '') + (obs ? obs + ' \u00b7 ' : '') + 'Importado de Mercado Pago',
     origenMercadoPagoId: pendiente.id,
     _updatedAt: Date.now()
   };

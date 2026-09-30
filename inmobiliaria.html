@@ -4644,12 +4644,19 @@ function cargarPropietarioDesdeProp() {
     const cs = (o.carpetas || '').split(',').map(c => c.trim());
     return cs.includes(String(carpeta));
   });
-  // Poblar el selector con todos los propietarios existentes
+  // Poblar el selector con todos los propietarios existentes, ordenados
+  // alfabéticamente por Apellido y luego Nombre (para encontrarlos rápido).
   const sel = document.getElementById('pp_owner_select');
   if (sel) {
+    const ownersOrdenados = [...owners].sort((a,b) => {
+      const apA = (a.apellido||'').trim().toLocaleLowerCase('es');
+      const apB = (b.apellido||'').trim().toLocaleLowerCase('es');
+      if (apA !== apB) return apA.localeCompare(apB, 'es');
+      return (a.nombre||'').trim().toLocaleLowerCase('es').localeCompare((b.nombre||'').trim().toLocaleLowerCase('es'), 'es');
+    });
     sel.innerHTML = '<option value="">-- Seleccionar propietario existente --</option>' +
       '<option value="__nuevo__">+ Cargar como propietario nuevo</option>' +
-      owners.map(o => `<option value="${o.id}">${o.nombre||''} ${o.apellido||''}</option>`).join('');
+      ownersOrdenados.map(o => `<option value="${o.id}">${o.apellido||''}, ${o.nombre||''}</option>`).join('');
     sel.value = owner ? String(owner.id) : '';
   }
   const campos = ['nombre','apellido','dni','cuit','tel','email','localidad','dir','banco','alias','cbu'];
@@ -4705,6 +4712,13 @@ function sincronizarPropietarioDesdeFichaPropiedad(carpeta) {
     if (updated[f]) algunCampoConDatos = true;
   }
   if (!ownerId && !algunCampoConDatos) return false; // pestaña Propietario vacía: nada que sincronizar
+  // Si esta carpeta hoy pertenece a otro propietario, se confirma antes de
+  // transferirla (misma protección que al guardar desde Propietarios).
+  const transferencia = detectarTransferenciasCarpetas(owners, carpeta, ownerId || null);
+  if (transferencia.length) {
+    const ok = confirm('\u26a0\ufe0f La carpeta ' + carpeta + ' pertenece actualmente a ' + transferencia[0].deQuien + '. \u00bfConfirm\u00e1s pasarla a este propietario?');
+    if (!ok) return false;
+  }
   let idx = ownerId ? owners.findIndex(o => String(o.id) === String(ownerId)) : -1;
   if (idx >= 0) {
     const cList = (owners[idx].carpetas || '').split(',').map(c => c.trim()).filter(Boolean);
@@ -5619,6 +5633,20 @@ function saveOwner() {
   const fields={carpetas:'o_carpetas',nombre:'o_nombre',apellido:'o_apellido',localidad:'o_localidad',direccion:'o_dir',telefono:'o_tel',dni:'o_dni',email:'o_email',cuit:'o_cuit',banco:'o_banco',nro_cuenta:'o_cta',alias:'o_alias',cbu:'o_cbu',contacto_adicional:'o_contacto_adicional',observaciones:'o_observaciones'};
   const updated={};
   for(const [k,elId] of Object.entries(fields)) { const el=document.getElementById(elId); updated[k]=el?el.value:''; }
+  // Si alguna carpeta que se está por asignar hoy pertenece a OTRO
+  // propietario, se lo mostramos explícito y pedimos confirmación — red de
+  // seguridad extra para que un descuido no le "robe" en silencio una
+  // propiedad a otro propietario.
+  const transferencias = detectarTransferenciasCarpetas(data, updated.carpetas, currentId);
+  if (transferencias.length) {
+    const detalle = transferencias.map(t => `\u2022 Carpeta ${t.carpeta} (actualmente de ${t.deQuien})`).join('\n');
+    const ok = confirm(
+      '\u26a0\ufe0f Est\u00e1s por sacarle estas propiedades a otro propietario y asign\u00e1rselas a ' +
+      (updated.nombre||'') + ' ' + (updated.apellido||'') + ':\n\n' + detalle +
+      '\n\n\u00bfConfirm\u00e1s este cambio?'
+    );
+    if (!ok) { showToast('Guardado cancelado \u2014 no se movi\u00f3 ninguna propiedad', 'error'); return; }
+  }
   if(currentId) { const idx=data.findIndex(x=>String(x.id)===String(currentId)); if(idx>=0) data[idx]={...data[idx],...updated}; }
   else { updated.id=Date.now(); data.push(updated); }
   // Una propiedad no puede quedar asignada a dos propietarios a la vez: por
@@ -5626,6 +5654,21 @@ function saveOwner() {
   // OTRO propietario que la tuviera cargada.
   desasignarCarpetasDeOtrosPropietarios(data, updated.carpetas, currentId);
   setData('owner_data',data); closeModal('modal-propietario'); renderPropietarios(); showToast('Propietario guardado');
+}
+
+// Devuelve la lista de {carpeta, deQuien} para cada carpeta de carpetasStr
+// que hoy pertenece a un propietario DISTINTO de idPropietarioActual.
+function detectarTransferenciasCarpetas(owners, carpetasStr, idPropietarioActual) {
+  const carpetasNuevas = (carpetasStr||'').split(',').map(c=>c.trim()).filter(Boolean);
+  const resultado = [];
+  carpetasNuevas.forEach(c => {
+    const duenioActual = owners.find(o =>
+      (!idPropietarioActual || String(o.id) !== String(idPropietarioActual)) &&
+      (o.carpetas||'').split(',').map(x=>x.trim()).includes(c)
+    );
+    if (duenioActual) resultado.push({ carpeta: c, deQuien: `${duenioActual.nombre||''} ${duenioActual.apellido||''}`.trim() || 'otro propietario' });
+  });
+  return resultado;
 }
 
 // Quita las carpetas indicadas (string separado por comas) de la lista de
@@ -9263,19 +9306,27 @@ function renderCaja() {
   // se suman a los totales de arriba hasta que se acepten de verdad).
   const pendientesFilas = _mpPendientesCache
     .filter(p => !fecha || String(p.fecha).slice(0,10) === fecha)
-    .map(p => `<tr style="background:#fff8e1">
+    .map(p => {
+      const idCorto = String(p.id).replace(/[^a-zA-Z0-9]/g,'');
+      const infoCelda = p.cuenta_contraparte_id
+        ? (p.entidad
+            ? `<b>${p.entidad}</b>${p.carpeta_sugerida?' · C'+p.carpeta_sugerida:''}`
+            : `<button class="btn-icon" title="Identificar esta cuenta" onclick="mostrarFormIdentificarMP('${p.id}','${p.cuenta_contraparte_id}')">🏷️ ¿Quién es?</button>`)
+        : 'Sin dato de cuenta';
+      return `<tr style="background:#fff8e1">
         <td>${String(p.fecha).slice(0,10)}</td>
         <td><span style="background:#ffe9a8;color:#8a6d00;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">🅿️ MP · ${p.tipo==='ingreso'?'Ingreso':'Egreso'}</span></td>
         <td><span style="background:#e3edff;color:#1a4480;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">Transferencia</span></td>
         <td>${p.descripcion||'Mercado Pago'}</td>
-        <td>-</td>
+        <td>${p.carpeta_sugerida||'-'}</td>
         <td style="font-weight:600">$${(parseFloat(p.monto)||0).toLocaleString('es-AR')}</td>
-        <td style="color:#5a6e82;font-size:12px">${p.entidad||''} · sin confirmar</td>
+        <td id="mp-info-${idCorto}" style="color:#5a6e82;font-size:12px">${infoCelda}</td>
         <td style="white-space:nowrap">
           <button class="btn-icon" title="Aceptar" onclick="aceptarMovimientoMP('${p.id}')">✅</button>
           <button class="btn-icon" title="Rechazar" onclick="rechazarMovimientoMP('${p.id}')">❌</button>
         </td>
-      </tr>`);
+      </tr>`;
+    });
 
   document.getElementById('caja-count-info').textContent = `${filtered.length} movimientos` + (pendientesFilas.length ? ` · ${pendientesFilas.length} de Mercado Pago sin confirmar` : '');
   const filasReales = filtered.map(m=>`<tr>
@@ -9557,6 +9608,84 @@ async function aceptarMovimientoMP(id) {
   if (!r.ok) { showToast(r.error || 'No se pudo aceptar', 'error'); return; }
   showToast('Movimiento cargado en Caja ✓');
   await loadAllFromServer();
+  await refrescarMpPendientesCache(true);
+}
+
+// Muestra, dentro de la propia fila del pendiente, un mini formulario para
+// decir a quién corresponde esta cuenta de Mercado Pago (una sola vez por
+// cuenta: de ahí en adelante se completa sola).
+function mostrarFormIdentificarMP(id, cuentaContraparteId) {
+  const idCorto = String(id).replace(/[^a-zA-Z0-9]/g,'');
+  const celda = document.getElementById('mp-info-'+idCorto);
+  if (!celda) return;
+  const inquilinos = (getData('tenant_data')||[]).filter(t=>t.carpeta);
+  const ordenarPorApellido = (a,b) => {
+    const apA=(a.apellido||'').trim().toLocaleLowerCase('es'), apB=(b.apellido||'').trim().toLocaleLowerCase('es');
+    if (apA!==apB) return apA.localeCompare(apB,'es');
+    return (a.nombre||'').trim().toLocaleLowerCase('es').localeCompare((b.nombre||'').trim().toLocaleLowerCase('es'),'es');
+  };
+  const inquilinosOrdenados = [...inquilinos].sort(ordenarPorApellido);
+  const propietarios = [...(getData('owner_data')||[]).filter(o=>o.carpetas)].sort(ordenarPorApellido);
+  const optsInquilinos = inquilinosOrdenados.map(t=>`<option value="${t.carpeta}">${t.apellido||''}, ${t.nombre||''} \u00b7 C${t.carpeta}</option>`).join('');
+  const optsPropietarios = propietarios.map(o=>`<option value="${(o.carpetas||'').split(',')[0].trim()}">${o.apellido||''}, ${o.nombre||''} \u00b7 C${o.carpetas}</option>`).join('');
+  celda.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:4px;min-width:220px">
+      <select id="mpid-tipo-${idCorto}" class="form-control" style="font-size:12px;padding:4px" onchange="cambiarTipoIdentificarMP('${idCorto}')">
+        <option value="">\u00bfQui\u00e9n es? (eleg\u00ed una opci\u00f3n)</option>
+        <option value="inquilino">Inquilino</option>
+        <option value="propietario">Propietario</option>
+        <option value="clara">Clara D\u00e1valos G\u00fcemes</option>
+        <option value="otro">Otra persona</option>
+      </select>
+      <div id="mpid-detalle-${idCorto}"></div>
+      <button class="btn btn-primary btn-sm" style="font-size:12px;padding:3px 8px" onclick="guardarIdentificacionMP('${id}','${cuentaContraparteId}','${idCorto}')">Guardar</button>
+    </div>`;
+  window['_mpOpciones_'+idCorto] = { optsInquilinos, optsPropietarios };
+}
+
+function cambiarTipoIdentificarMP(idCorto) {
+  const tipo = document.getElementById('mpid-tipo-'+idCorto).value;
+  const detalle = document.getElementById('mpid-detalle-'+idCorto);
+  const opts = window['_mpOpciones_'+idCorto] || {};
+  if (tipo === 'inquilino') {
+    detalle.innerHTML = `<select id="mpid-valor-${idCorto}" class="form-control" style="font-size:12px;padding:4px"><option value="">Eleg\u00ed el inquilino</option>${opts.optsInquilinos}</select>`;
+  } else if (tipo === 'propietario') {
+    detalle.innerHTML = `<select id="mpid-valor-${idCorto}" class="form-control" style="font-size:12px;padding:4px"><option value="">Eleg\u00ed el propietario</option>${opts.optsPropietarios}</select>`;
+  } else if (tipo === 'otro') {
+    detalle.innerHTML = `<input type="text" id="mpid-valor-${idCorto}" class="form-control" style="font-size:12px;padding:4px" placeholder="Nombre de la persona">`;
+  } else {
+    detalle.innerHTML = '';
+  }
+}
+
+async function guardarIdentificacionMP(id, cuentaContraparteId, idCorto) {
+  const tipo = document.getElementById('mpid-tipo-'+idCorto)?.value;
+  if (!tipo) { showToast('Eleg\u00ed primero qui\u00e9n es', 'error'); return; }
+  let nombre = '', carpeta = '';
+  if (tipo === 'clara') {
+    nombre = 'Clara D\u00e1valos G\u00fcemes';
+  } else if (tipo === 'inquilino') {
+    const carp = document.getElementById('mpid-valor-'+idCorto)?.value;
+    if (!carp) { showToast('Eleg\u00ed el inquilino', 'error'); return; }
+    const t = (getData('tenant_data')||[]).find(x=>String(x.carpeta)===String(carp));
+    nombre = t ? `${t.nombre||''} ${t.apellido||''}`.trim() : '';
+    carpeta = carp;
+  } else if (tipo === 'propietario') {
+    const carp = document.getElementById('mpid-valor-'+idCorto)?.value;
+    if (!carp) { showToast('Eleg\u00ed el propietario', 'error'); return; }
+    const o = (getData('owner_data')||[]).find(x=>(x.carpetas||'').split(',').map(c=>c.trim()).includes(carp));
+    nombre = o ? `${o.nombre||''} ${o.apellido||''}`.trim() : '';
+    carpeta = carp;
+  } else if (tipo === 'otro') {
+    nombre = (document.getElementById('mpid-valor-'+idCorto)?.value || '').trim();
+    if (!nombre) { showToast('Escrib\u00ed el nombre de la persona', 'error'); return; }
+  }
+  const r = await fetch(SERVER_URL + '/api/mp/cuentas-conocidas', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ id_cuenta_mp: cuentaContraparteId, tipo, nombre, carpeta })
+  }).then(r=>r.json());
+  if (!r.ok) { showToast(r.error || 'No se pudo guardar', 'error'); return; }
+  showToast('Cuenta identificada: ' + nombre);
   await refrescarMpPendientesCache(true);
 }
 
