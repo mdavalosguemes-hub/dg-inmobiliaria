@@ -47,6 +47,22 @@ async function initSchema() {
       number INTEGER NOT NULL,
       PRIMARY KEY (key, number)
     );
+    CREATE TABLE IF NOT EXISTS mp_pendientes (
+      id TEXT PRIMARY KEY,
+      fecha DATE,
+      tipo TEXT,
+      monto NUMERIC,
+      descripcion TEXT,
+      entidad TEXT,
+      medio_sugerido TEXT,
+      estado TEXT NOT NULL DEFAULT 'pendiente',
+      raw JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS mp_sync_estado (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
     CREATE TABLE IF NOT EXISTS users (
       email TEXT PRIMARY KEY,
       name TEXT,
@@ -323,10 +339,12 @@ function fusionarValoresHistoricos(existente, entrante) {
   return resultado;
 }
 
-app.post('/api/set', async (req, res) => {
-  const { key, value } = req.body || {};
-  if (!key) return res.status(400).json({ ok: false, error: 'Falta key' });
-
+// Guarda un valor en kv_store aplicando la misma fusión segura que usa
+// /api/set (por id, por objeto anidado, o por unión simple, según
+// corresponda), y devuelve el valor final ya fusionado. Se usa tanto desde
+// el endpoint /api/set como internamente (ej. al aprobar un movimiento de
+// Mercado Pago hacia Caja), para que ambos caminos sean igual de seguros.
+async function guardarConFusion(key, value) {
   let valorFinal = value;
   const CLAVES_OBJETO_FUSIONABLE = ['prop_overrides', 'owner_overrides', 'tenant_overrides'];
   const CLAVES_UNION_SIMPLE = ['prop_deleted'];
@@ -347,12 +365,18 @@ app.post('/api/set', async (req, res) => {
     const existentes = Array.isArray(rows[0] && rows[0].value) ? rows[0].value : [];
     valorFinal = fusionarPorUnion(existentes, value);
   }
-
   await pool.query(
     'INSERT INTO kv_store (key, value, updated_at) VALUES ($1,$2,now()) ' +
     'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()',
     [key, JSON.stringify(valorFinal ?? null)]
   );
+  return valorFinal;
+}
+
+app.post('/api/set', async (req, res) => {
+  const { key, value } = req.body || {};
+  if (!key) return res.status(400).json({ ok: false, error: 'Falta key' });
+  const valorFinal = await guardarConFusion(key, value);
   // Devolvemos el valor final (ya fusionado) para que el navegador que guardó
   // pueda actualizar su copia local con cualquier registro que haya sumado
   // la fusión (por ejemplo, algo que había cargado la otra PC).
@@ -576,6 +600,157 @@ app.post('/api/users/save', async (req, res) => {
     );
   }
   res.json({ ok: true });
+});
+
+// ============================================================
+// INTEGRACIÓN CON MERCADO PAGO (opcional)
+// - Se activa SOLO si existe la variable de entorno MP_ACCESS_TOKEN en
+//   Render. Si no está configurada, todo este bloque queda inactivo y el
+//   resto del sistema sigue funcionando exactamente igual que siempre
+//   (interruptor de apagado real: basta con borrar esa variable).
+// - No carga nada directo a Caja: cada movimiento que trae de Mercado Pago
+//   queda guardado en "mp_pendientes" hasta que alguien lo revisa y lo
+//   aprueba manualmente desde la web (evita mezclar Reservas u otros
+//   movimientos que no correspondan con la Caja real).
+// ============================================================
+const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN || '';
+const MP_SYNC_INTERVALO_MS = 5 * 60 * 1000; // cada 5 minutos
+
+async function mpObtenerEstado(key, fallback) {
+  const { rows } = await pool.query('SELECT value FROM mp_sync_estado WHERE key = $1', [key]);
+  return rows[0] ? rows[0].value : fallback;
+}
+async function mpGuardarEstado(key, value) {
+  await pool.query(
+    'INSERT INTO mp_sync_estado (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+    [key, value]
+  );
+}
+
+async function sincronizarMercadoPago() {
+  if (!MP_ACCESS_TOKEN) return { ok: false, motivo: 'Sin MP_ACCESS_TOKEN configurado (integración apagada)' };
+  try {
+    const ahora = new Date();
+    const desdeStr = await mpObtenerEstado('ultima_fecha_sincronizada', null);
+    // Primera vez: traer solo los últimos 2 días, para no importar años de historial de una.
+    const desde = desdeStr ? new Date(desdeStr) : new Date(ahora.getTime() - 2 * 24 * 60 * 60 * 1000);
+
+    const url = new URL('https://api.mercadopago.com/v1/payments/search');
+    url.searchParams.set('sort', 'date_created');
+    url.searchParams.set('criteria', 'asc');
+    url.searchParams.set('range', 'date_created');
+    url.searchParams.set('begin_date', desde.toISOString());
+    url.searchParams.set('end_date', ahora.toISOString());
+    url.searchParams.set('limit', '50');
+
+    const resp = await fetch(url, { headers: { Authorization: 'Bearer ' + MP_ACCESS_TOKEN } });
+    if (!resp.ok) {
+      const textoError = await resp.text().catch(() => '');
+      console.error('Mercado Pago respondió con error:', resp.status, textoError);
+      return { ok: false, motivo: 'Mercado Pago respondió ' + resp.status };
+    }
+    const data = await resp.json();
+    const pagos = (data && data.results) || [];
+
+    let nuevos = 0;
+    for (const p of pagos) {
+      const id = String(p.id);
+      const monto = parseFloat(p.transaction_amount) || 0;
+      // No sabemos con certeza, para una cuenta personal, si el pago fue a
+      // favor o en contra sin más contexto: usamos el signo que reporta MP
+      // como pista, pero quien apruebe el movimiento en la web confirma el
+      // tipo definitivo (Ingreso/Egreso) antes de que cuente en Caja.
+      const tipoSugerido = (p.transaction_amount || 0) >= 0 ? 'ingreso' : 'egreso';
+      const entidad = (p.payer && (p.payer.email || p.payer.id)) || (p.additional_info && p.additional_info.payer && p.additional_info.payer.first_name) || '';
+      await pool.query(
+        `INSERT INTO mp_pendientes (id, fecha, tipo, monto, descripcion, entidad, medio_sugerido, raw)
+         VALUES ($1,$2,$3,$4,$5,$6,'Transferencia',$7)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          id,
+          (p.date_created || ahora.toISOString()).slice(0, 10),
+          tipoSugerido,
+          Math.abs(monto),
+          p.description || p.operation_type || 'Movimiento de Mercado Pago',
+          entidad,
+          JSON.stringify(p)
+        ]
+      );
+      nuevos++;
+    }
+    await mpGuardarEstado('ultima_fecha_sincronizada', ahora.toISOString());
+    return { ok: true, revisados: pagos.length, nuevos };
+  } catch (e) {
+    console.error('Error sincronizando con Mercado Pago:', e);
+    return { ok: false, motivo: e.message };
+  }
+}
+
+// Sincroniza sola cada 5 minutos (si hay token configurado)
+if (MP_ACCESS_TOKEN) {
+  setInterval(sincronizarMercadoPago, MP_SYNC_INTERVALO_MS);
+  setTimeout(sincronizarMercadoPago, 10000); // una primera pasada al arrancar el servidor
+}
+
+// GET /api/mp/estado -> si la integración está activa o no, y el resultado
+// del último intento (para poder mostrar algo claro en la web)
+app.get('/api/mp/estado', (req, res) => {
+  res.json({ ok: true, activo: !!MP_ACCESS_TOKEN });
+});
+
+// POST /api/mp/sincronizar-ahora -> dispara una sincronización manual (para
+// probar sin esperar los 5 minutos, o para forzar un refresco)
+app.post('/api/mp/sincronizar-ahora', async (req, res) => {
+  const resultado = await sincronizarMercadoPago();
+  res.json(resultado);
+});
+
+// GET /api/mp/pendientes -> lista de movimientos todavía sin revisar
+app.get('/api/mp/pendientes', async (req, res) => {
+  const { rows } = await pool.query(
+    "SELECT id, fecha, tipo, monto, descripcion, entidad, medio_sugerido FROM mp_pendientes WHERE estado = 'pendiente' ORDER BY fecha DESC, created_at DESC"
+  );
+  res.json({ ok: true, pendientes: rows });
+});
+
+// POST /api/mp/descartar -> lo marca como descartado (nunca entra a Caja)
+app.post('/api/mp/descartar', async (req, res) => {
+  const { id } = req.body || {};
+  if (!id) return res.status(400).json({ ok: false, error: 'Falta id' });
+  await pool.query("UPDATE mp_pendientes SET estado = 'descartado' WHERE id = $1", [String(id)]);
+  res.json({ ok: true });
+});
+
+// POST /api/mp/aprobar -> confirma los datos (el usuario puede haberlos
+// corregido: tipo, medio, concepto, carpeta, monto, obs) y recién ahí crea
+// el movimiento real en Caja, usando la misma fusión segura de siempre.
+app.post('/api/mp/aprobar', async (req, res) => {
+  const { id, tipo, concepto, carpeta, monto, obs } = req.body || {};
+  if (!id) return res.status(400).json({ ok: false, error: 'Falta id' });
+  const { rows } = await pool.query('SELECT * FROM mp_pendientes WHERE id = $1', [String(id)]);
+  const pendiente = rows[0];
+  if (!pendiente) return res.status(404).json({ ok: false, error: 'No se encontr\u00f3 ese movimiento pendiente' });
+
+  const { rows: cajaRows } = await pool.query("SELECT value FROM kv_store WHERE key = 'caja_data'");
+  const cajaActual = Array.isArray(cajaRows[0] && cajaRows[0].value) ? cajaRows[0].value : [];
+  const movimiento = {
+    id: 'MP_' + pendiente.id,
+    tipo: tipo || pendiente.tipo,
+    fecha: pendiente.fecha instanceof Date ? pendiente.fecha.toISOString().slice(0, 10) : String(pendiente.fecha).slice(0, 10),
+    // Un movimiento de Mercado Pago SIEMPRE es Transferencia (nunca puede
+    // ser Efectivo): se ignora a propósito cualquier "medio" que llegue en
+    // el pedido, para que esto no dependa de lo que mande el navegador.
+    medio: 'Transferencia',
+    concepto: concepto || pendiente.descripcion || 'Mercado Pago',
+    carpeta: carpeta || '',
+    monto: monto !== undefined ? parseFloat(monto) : parseFloat(pendiente.monto),
+    obs: (obs ? obs + ' \u00b7 ' : '') + 'Importado de Mercado Pago',
+    origenMercadoPagoId: pendiente.id,
+    _updatedAt: Date.now()
+  };
+  await guardarConFusion('caja_data', [...cajaActual, movimiento]);
+  await pool.query("UPDATE mp_pendientes SET estado = 'aprobado' WHERE id = $1", [String(id)]);
+  res.json({ ok: true, movimiento });
 });
 
 // ---- Servir la web (inmobiliaria.html) ----
