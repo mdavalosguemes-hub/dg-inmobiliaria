@@ -689,8 +689,13 @@ async function sincronizarMercadoPago() {
     for (const p of pagos) {
       const id = String(p.id);
       const monto = Math.abs(parseFloat(p.transaction_amount) || 0);
-      const collectorId = p.collector && p.collector.id != null ? String(p.collector.id) : null;
-      const payerId = p.payer_id != null ? String(p.payer_id) : null;
+      // Mercado Pago no siempre manda estos datos con la misma forma: a veces
+      // vienen como objeto anidado (payer.id / collector.id) y a veces como
+      // campo plano (payer_id / collector_id). Se contemplan las dos.
+      const collectorId = (p.collector && p.collector.id != null) ? String(p.collector.id)
+                         : (p.collector_id != null ? String(p.collector_id) : null);
+      const payerId = (p.payer && p.payer.id != null) ? String(p.payer.id)
+                     : (p.payer_id != null ? String(p.payer_id) : null);
 
       // Se compara contra la propia cuenta: si el que COBRA es esta cuenta,
       // es un Ingreso; si el que PAGA es esta cuenta, es un Egreso. Solo si
