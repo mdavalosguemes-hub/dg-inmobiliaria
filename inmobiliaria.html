@@ -2207,7 +2207,32 @@ function sincronizarPeriodoConceptos() {
   const gaPeriodoEl = document.querySelector('[data-periodo-concepto="Gastos administrativos"]');
   if (alqPeriodoEl) alqPeriodoEl.value = valor;
   if (gaPeriodoEl) gaPeriodoEl.value = valor;
+
+  // Si el inquilino paga adelantado (ej. a fin de septiembre paga el
+  // alquiler de octubre), el Período puede quedar en un mes distinto al
+  // actual. Acá se verifica cuál es el alquiler VIGENTE según Valores
+  // Históricos para ese mes puntual: si es distinto al que ya está cargado,
+  // se actualiza (Alquiler y Gastos administrativos); si es igual, o no hay
+  // dato cargado para ese mes, se deja tal cual está.
+  const periodo = parsePeriodoMesAnio(valor);
+  const carpeta = (document.getElementById('r_carpeta').value || '').trim();
+  if (periodo && carpeta) {
+    const valorVigente = buscarUltimoValorVigente(getValoresHistoricos(), carpeta, String(periodo.anio), String(periodo.mes));
+    if (valorVigente !== '' && valorVigente !== undefined && valorVigente !== null) {
+      const nuevoAlquiler = parseFloat(valorVigente) || 0;
+      const alqValorEl = document.querySelector('[data-concepto="Alquiler"]');
+      const gaValorEl = document.querySelector('[data-concepto="Gastos administrativos"]');
+      const alquilerActual = alqValorEl ? (parseFloat(alqValorEl.value) || 0) : null;
+      if (alqValorEl && alquilerActual !== nuevoAlquiler) {
+        alqValorEl.value = nuevoAlquiler;
+        if (gaValorEl) gaValorEl.value = Math.ceil((nuevoAlquiler * 0.03) / 100) * 100;
+        showToast('Alquiler actualizado seg\u00fan Valores Hist\u00f3ricos de ' + document.getElementById('r_periodo').value);
+      }
+    }
+  }
+
   calcPunitorios(); // el período de Alquiler cambió, recalcula si corresponde
+  calcTotal();
 }
 
 function calcPunitorios() {
