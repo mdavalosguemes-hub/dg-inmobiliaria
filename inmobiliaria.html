@@ -9648,25 +9648,36 @@ async function aceptarMovimientoMP(id) {
 // Muestra, dentro de la propia fila del pendiente, un mini formulario para
 // decir a quién corresponde esta cuenta de Mercado Pago (una sola vez por
 // cuenta: de ahí en adelante se completa sola).
+function ordenarPorApellidoMP(a,b) {
+  const apA=(a.apellido||'').trim().toLocaleLowerCase('es'), apB=(b.apellido||'').trim().toLocaleLowerCase('es');
+  if (apA!==apB) return apA.localeCompare(apB,'es');
+  return (a.nombre||'').trim().toLocaleLowerCase('es').localeCompare((b.nombre||'').trim().toLocaleLowerCase('es'),'es');
+}
+
+// Inquilinos de viviendas + inquilinos de cocheras (también transfieren),
+// juntos en una sola lista ordenada alfabéticamente por apellido.
+function obtenerInquilinosParaIdentificarMP() {
+  const deViviendas = (getData('tenant_data')||[]).filter(t=>t.carpeta)
+    .map(t => ({ carpeta: t.carpeta, nombre: t.nombre, apellido: t.apellido }));
+  const deCocheras = visibles(getData('cochera_data')||[]).filter(c=>c.carpeta && (c.nombre_inq||c.apellido_inq))
+    .map(c => ({ carpeta: c.carpeta, nombre: c.nombre_inq, apellido: c.apellido_inq, esCochera: true }));
+  return [...deViviendas, ...deCocheras].sort(ordenarPorApellidoMP);
+}
+
 function mostrarFormIdentificarMP(id, cuentaContraparteId) {
   const idCorto = String(id).replace(/[^a-zA-Z0-9]/g,'');
   const celda = document.getElementById('mp-info-'+idCorto);
   if (!celda) return;
-  const inquilinos = (getData('tenant_data')||[]).filter(t=>t.carpeta);
-  const ordenarPorApellido = (a,b) => {
-    const apA=(a.apellido||'').trim().toLocaleLowerCase('es'), apB=(b.apellido||'').trim().toLocaleLowerCase('es');
-    if (apA!==apB) return apA.localeCompare(apB,'es');
-    return (a.nombre||'').trim().toLocaleLowerCase('es').localeCompare((b.nombre||'').trim().toLocaleLowerCase('es'),'es');
-  };
-  const inquilinosOrdenados = [...inquilinos].sort(ordenarPorApellido);
+  const ordenarPorApellido = ordenarPorApellidoMP;
+  const inquilinosOrdenados = obtenerInquilinosParaIdentificarMP();
   const propietarios = [...(getData('owner_data')||[]).filter(o=>o.carpetas)].sort(ordenarPorApellido);
-  const optsInquilinos = inquilinosOrdenados.map(t=>`<option value="${t.carpeta}">${t.apellido||''}, ${t.nombre||''} \u00b7 C${t.carpeta}</option>`).join('');
+  const optsInquilinos = inquilinosOrdenados.map(t=>`<option value="${t.carpeta}">${t.apellido||''}, ${t.nombre||''} \u00b7 ${t.esCochera?t.carpeta:'C'+t.carpeta}${t.esCochera?' (Cochera)':''}</option>`).join('');
   const optsPropietarios = propietarios.map(o=>`<option value="${(o.carpetas||'').split(',')[0].trim()}">${o.apellido||''}, ${o.nombre||''} \u00b7 C${o.carpetas}</option>`).join('');
   celda.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:4px;min-width:220px">
       <select id="mpid-tipo-${idCorto}" class="form-control" style="font-size:12px;padding:4px" onchange="cambiarTipoIdentificarMP('${idCorto}')">
         <option value="">\u00bfQui\u00e9n es? (eleg\u00ed una opci\u00f3n)</option>
-        <option value="inquilino">Inquilino</option>
+        <option value="inquilino">Inquilino (vivienda o cochera)</option>
         <option value="propietario">Propietario</option>
         <option value="clara">Clara D\u00e1valos G\u00fcemes</option>
         <option value="otro">Otra persona</option>
@@ -9701,8 +9712,10 @@ async function guardarIdentificacionMP(id, cuentaContraparteId, idCorto) {
   } else if (tipo === 'inquilino') {
     const carp = document.getElementById('mpid-valor-'+idCorto)?.value;
     if (!carp) { showToast('Eleg\u00ed el inquilino', 'error'); return; }
-    const t = (getData('tenant_data')||[]).find(x=>String(x.carpeta)===String(carp));
-    nombre = t ? `${t.nombre||''} ${t.apellido||''}`.trim() : '';
+    const t = (getData('tenant_data')||[]).find(x=>String(x.carpeta)===String(carp))
+      || visibles(getData('cochera_data')||[]).find(x=>String(x.carpeta)===String(carp));
+    const esCochera = t && t.nombre_inq !== undefined;
+    nombre = t ? `${esCochera ? t.nombre_inq : t.nombre || ''} ${esCochera ? t.apellido_inq : t.apellido || ''}`.trim() : '';
     carpeta = carp;
   } else if (tipo === 'propietario') {
     const carp = document.getElementById('mpid-valor-'+idCorto)?.value;
@@ -9731,21 +9744,16 @@ function mostrarFormIdentificarMPDesdeCaja(movId, cuentaContraparteId) {
   const idCorto = String(movId).replace(/[^a-zA-Z0-9]/g,'');
   const celda = document.getElementById('caja-obs-'+idCorto);
   if (!celda) return;
-  const inquilinos = (getData('tenant_data')||[]).filter(t=>t.carpeta);
-  const ordenarPorApellido = (a,b) => {
-    const apA=(a.apellido||'').trim().toLocaleLowerCase('es'), apB=(b.apellido||'').trim().toLocaleLowerCase('es');
-    if (apA!==apB) return apA.localeCompare(apB,'es');
-    return (a.nombre||'').trim().toLocaleLowerCase('es').localeCompare((b.nombre||'').trim().toLocaleLowerCase('es'),'es');
-  };
-  const inquilinosOrdenados = [...inquilinos].sort(ordenarPorApellido);
+  const ordenarPorApellido = ordenarPorApellidoMP;
+  const inquilinosOrdenados = obtenerInquilinosParaIdentificarMP();
   const propietarios = [...(getData('owner_data')||[]).filter(o=>o.carpetas)].sort(ordenarPorApellido);
-  const optsInquilinos = inquilinosOrdenados.map(t=>`<option value="${t.carpeta}">${t.apellido||''}, ${t.nombre||''} \u00b7 C${t.carpeta}</option>`).join('');
+  const optsInquilinos = inquilinosOrdenados.map(t=>`<option value="${t.carpeta}">${t.apellido||''}, ${t.nombre||''} \u00b7 ${t.esCochera?t.carpeta:'C'+t.carpeta}${t.esCochera?' (Cochera)':''}</option>`).join('');
   const optsPropietarios = propietarios.map(o=>`<option value="${(o.carpetas||'').split(',')[0].trim()}">${o.apellido||''}, ${o.nombre||''} \u00b7 C${o.carpetas}</option>`).join('');
   celda.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:4px;min-width:220px">
       <select id="mpidc-tipo-${idCorto}" class="form-control" style="font-size:12px;padding:4px" onchange="cambiarTipoIdentificarMPCaja('${idCorto}')">
         <option value="">\u00bfQui\u00e9n es? (eleg\u00ed una opci\u00f3n)</option>
-        <option value="inquilino">Inquilino</option>
+        <option value="inquilino">Inquilino (vivienda o cochera)</option>
         <option value="propietario">Propietario</option>
         <option value="clara">Clara D\u00e1valos G\u00fcemes</option>
         <option value="otro">Otra persona</option>
@@ -9783,8 +9791,10 @@ async function guardarIdentificacionMPDesdeCaja(movId, cuentaContraparteId, idCo
   } else if (tipo === 'inquilino') {
     const carp = document.getElementById('mpidc-valor-'+idCorto)?.value;
     if (!carp) { showToast('Eleg\u00ed el inquilino', 'error'); return; }
-    const t = (getData('tenant_data')||[]).find(x=>String(x.carpeta)===String(carp));
-    nombre = t ? `${t.nombre||''} ${t.apellido||''}`.trim() : '';
+    const t = (getData('tenant_data')||[]).find(x=>String(x.carpeta)===String(carp))
+      || visibles(getData('cochera_data')||[]).find(x=>String(x.carpeta)===String(carp));
+    const esCochera = t && t.nombre_inq !== undefined;
+    nombre = t ? `${esCochera ? t.nombre_inq : t.nombre || ''} ${esCochera ? t.apellido_inq : t.apellido || ''}`.trim() : '';
     carpeta = carp;
   } else if (tipo === 'propietario') {
     const carp = document.getElementById('mpidc-valor-'+idCorto)?.value;
