@@ -9330,16 +9330,24 @@ function renderCaja() {
     });
 
   document.getElementById('caja-count-info').textContent = `${filtered.length} movimientos` + (pendientesFilas.length ? ` · ${pendientesFilas.length} de Mercado Pago sin confirmar` : '');
-  const filasReales = filtered.map(m=>`<tr>
+  const filasReales = filtered.map(m=>{
+    const idCortoMov = String(m.id).replace(/[^a-zA-Z0-9]/g,'');
+    // Si vino de Mercado Pago, se puede identificar/corregir la cuenta en
+    // cualquier momento, no solo mientras estuvo pendiente.
+    const botonIdentificarMov = (m.origenMercadoPagoId && m.cuentaContraparteId)
+      ? ` <button class="btn-icon" title="Identificar/corregir cuenta de Mercado Pago" onclick="mostrarFormIdentificarMPDesdeCaja('${m.id}','${m.cuentaContraparteId}')">\ud83c\udff7\ufe0f</button>`
+      : '';
+    return `<tr>
         <td>${m.fecha||''}</td>
         <td><span style="background:${m.tipo==='ingreso'?'#e8f8ef':'#fdecea'};color:${m.tipo==='ingreso'?'#27ae60':'#e74c3c'};padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">${m.tipo==='ingreso'?'Ingreso':'Egreso'}</span></td>
         <td><span style="background:${(m.medio||'Efectivo')==='Efectivo'?'#fff4d9':'#e3edff'};color:${(m.medio||'Efectivo')==='Efectivo'?'#a87800':'#1a4480'};padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">${m.medio||'Efectivo'}</span></td>
         <td>${m.concepto||''}</td>
         <td>${m.carpeta||'-'}</td>
         <td style="font-weight:600">$${(parseFloat(m.monto)||0).toLocaleString('es-AR')}</td>
-        <td style="color:#5a6e82;font-size:12px">${m.obs||''}</td>
-        <td><button class="btn-icon" onclick="editMovimiento('${m.id}')">\u270f\ufe0f</button></td>
-      </tr>`);
+        <td id="caja-obs-${idCortoMov}" style="color:#5a6e82;font-size:12px">${m.obs||''}</td>
+        <td><button class="btn-icon" onclick="editMovimiento('${m.id}')">\u270f\ufe0f</button>${botonIdentificarMov}</td>
+      </tr>`;
+  });
   const todasLasFilas = pendientesFilas.concat(filasReales);
   document.getElementById('tbody-caja').innerHTML = todasLasFilas.length===0
     ? '<tr><td colspan="8" style="padding:30px;text-align:center;color:#5a6e82">Sin movimientos. Registr\u00e1 el primero.</td></tr>'
@@ -9688,6 +9696,100 @@ async function guardarIdentificacionMP(id, cuentaContraparteId, idCorto) {
   if (!r.ok) { showToast(r.error || 'No se pudo guardar', 'error'); return; }
   showToast('Cuenta identificada: ' + nombre);
   await refrescarMpPendientesCache(true);
+}
+
+// Igual que mostrarFormIdentificarMP, pero para un movimiento que YA está
+// aceptado en Caja (no uno pendiente): se puede identificar o corregir la
+// cuenta en cualquier momento, y además de "aprenderla" para la próxima vez,
+// corrige la Carpeta/Observaciones de ESTE movimiento ya mismo.
+function mostrarFormIdentificarMPDesdeCaja(movId, cuentaContraparteId) {
+  const idCorto = String(movId).replace(/[^a-zA-Z0-9]/g,'');
+  const celda = document.getElementById('caja-obs-'+idCorto);
+  if (!celda) return;
+  const inquilinos = (getData('tenant_data')||[]).filter(t=>t.carpeta);
+  const ordenarPorApellido = (a,b) => {
+    const apA=(a.apellido||'').trim().toLocaleLowerCase('es'), apB=(b.apellido||'').trim().toLocaleLowerCase('es');
+    if (apA!==apB) return apA.localeCompare(apB,'es');
+    return (a.nombre||'').trim().toLocaleLowerCase('es').localeCompare((b.nombre||'').trim().toLocaleLowerCase('es'),'es');
+  };
+  const inquilinosOrdenados = [...inquilinos].sort(ordenarPorApellido);
+  const propietarios = [...(getData('owner_data')||[]).filter(o=>o.carpetas)].sort(ordenarPorApellido);
+  const optsInquilinos = inquilinosOrdenados.map(t=>`<option value="${t.carpeta}">${t.apellido||''}, ${t.nombre||''} \u00b7 C${t.carpeta}</option>`).join('');
+  const optsPropietarios = propietarios.map(o=>`<option value="${(o.carpetas||'').split(',')[0].trim()}">${o.apellido||''}, ${o.nombre||''} \u00b7 C${o.carpetas}</option>`).join('');
+  celda.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:4px;min-width:220px">
+      <select id="mpidc-tipo-${idCorto}" class="form-control" style="font-size:12px;padding:4px" onchange="cambiarTipoIdentificarMPCaja('${idCorto}')">
+        <option value="">\u00bfQui\u00e9n es? (eleg\u00ed una opci\u00f3n)</option>
+        <option value="inquilino">Inquilino</option>
+        <option value="propietario">Propietario</option>
+        <option value="clara">Clara D\u00e1valos G\u00fcemes</option>
+        <option value="otro">Otra persona</option>
+      </select>
+      <div id="mpidc-detalle-${idCorto}"></div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-primary btn-sm" style="font-size:12px;padding:3px 8px" onclick="guardarIdentificacionMPDesdeCaja('${movId}','${cuentaContraparteId}','${idCorto}')">Guardar</button>
+        <button class="btn btn-secondary btn-sm" style="font-size:12px;padding:3px 8px" onclick="renderCaja()">Cancelar</button>
+      </div>
+    </div>`;
+  window['_mpOpciones_'+idCorto] = { optsInquilinos, optsPropietarios };
+}
+
+function cambiarTipoIdentificarMPCaja(idCorto) {
+  const tipo = document.getElementById('mpidc-tipo-'+idCorto).value;
+  const detalle = document.getElementById('mpidc-detalle-'+idCorto);
+  const opts = window['_mpOpciones_'+idCorto] || {};
+  if (tipo === 'inquilino') {
+    detalle.innerHTML = `<select id="mpidc-valor-${idCorto}" class="form-control" style="font-size:12px;padding:4px"><option value="">Eleg\u00ed el inquilino</option>${opts.optsInquilinos}</select>`;
+  } else if (tipo === 'propietario') {
+    detalle.innerHTML = `<select id="mpidc-valor-${idCorto}" class="form-control" style="font-size:12px;padding:4px"><option value="">Eleg\u00ed el propietario</option>${opts.optsPropietarios}</select>`;
+  } else if (tipo === 'otro') {
+    detalle.innerHTML = `<input type="text" id="mpidc-valor-${idCorto}" class="form-control" style="font-size:12px;padding:4px" placeholder="Nombre de la persona">`;
+  } else {
+    detalle.innerHTML = '';
+  }
+}
+
+async function guardarIdentificacionMPDesdeCaja(movId, cuentaContraparteId, idCorto) {
+  const tipo = document.getElementById('mpidc-tipo-'+idCorto)?.value;
+  if (!tipo) { showToast('Eleg\u00ed primero qui\u00e9n es', 'error'); return; }
+  let nombre = '', carpeta = '';
+  if (tipo === 'clara') {
+    nombre = 'Clara D\u00e1valos G\u00fcemes';
+  } else if (tipo === 'inquilino') {
+    const carp = document.getElementById('mpidc-valor-'+idCorto)?.value;
+    if (!carp) { showToast('Eleg\u00ed el inquilino', 'error'); return; }
+    const t = (getData('tenant_data')||[]).find(x=>String(x.carpeta)===String(carp));
+    nombre = t ? `${t.nombre||''} ${t.apellido||''}`.trim() : '';
+    carpeta = carp;
+  } else if (tipo === 'propietario') {
+    const carp = document.getElementById('mpidc-valor-'+idCorto)?.value;
+    if (!carp) { showToast('Eleg\u00ed el propietario', 'error'); return; }
+    const o = (getData('owner_data')||[]).find(x=>(x.carpetas||'').split(',').map(c=>c.trim()).includes(carp));
+    nombre = o ? `${o.nombre||''} ${o.apellido||''}`.trim() : '';
+    carpeta = carp;
+  } else if (tipo === 'otro') {
+    nombre = (document.getElementById('mpidc-valor-'+idCorto)?.value || '').trim();
+    if (!nombre) { showToast('Escrib\u00ed el nombre de la persona', 'error'); return; }
+  }
+  // 1) Queda "aprendida" para la próxima vez que aparezca esta misma cuenta.
+  const r = await fetch(SERVER_URL + '/api/mp/cuentas-conocidas', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ id_cuenta_mp: cuentaContraparteId, tipo, nombre, carpeta })
+  }).then(r=>r.json());
+  if (!r.ok) { showToast(r.error || 'No se pudo guardar', 'error'); return; }
+  // 2) Corrige YA este movimiento puntual (carpeta + observaciones).
+  const data = getData('caja_data') || [];
+  const idx = data.findIndex(m => String(m.id) === String(movId));
+  if (idx >= 0) {
+    data[idx] = Object.assign({}, data[idx], {
+      carpeta: carpeta || data[idx].carpeta || '',
+      obs: (nombre ? nombre + ' \u00b7 ' : '') + 'Importado de Mercado Pago',
+      _updatedAt: nowTS()
+    });
+    setData('caja_data', data);
+  }
+  showToast('Cuenta identificada: ' + nombre);
+  renderCaja();
 }
 
 async function rechazarMovimientoMP(id) {
