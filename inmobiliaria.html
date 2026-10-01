@@ -6850,6 +6850,34 @@ function sincronizarHonorariosEnCaja(recibo) {
   const data = getData('caja_data') || [];
   const idx = data.findIndex(m => String(m.id) === String(idMov));
 
+  // Solo al crear el movimiento por PRIMERA vez (no en cada edición
+  // posterior del recibo): si se paga por Transferencia, chequear si ya
+  // hay algún movimiento importado de Mercado Pago ese mismo día para esta
+  // misma carpeta, para no duplicar si es la misma transferencia del
+  // inquilino. No se compara el monto (casi nunca va a coincidir: el de MP
+  // suele ser el total que transfirió el inquilino, no solo la parte de
+  // honorarios) — se le muestra el detalle y decide la persona.
+  if (idx === -1 && recibo.formaPago === 'Transferencia' && monto > 0) {
+    const mpDelDia = visibles(data).filter(m =>
+      m.origenMercadoPagoId && String(m.carpeta) === String(recibo.carpeta) && m.fecha === recibo.fecha
+    );
+    if (mpDelDia.length) {
+      const detalle = mpDelDia.map(m =>
+        `\u2022 $${(parseFloat(m.monto)||0).toLocaleString('es-AR')} \u2014 ${m.concepto||''}${m.obs ? ' (' + m.obs + ')' : ''}`
+      ).join('\n');
+      const esLaMisma = confirm(
+        'Ya hay ' + mpDelDia.length + ' movimiento(s) de Mercado Pago cargado(s) HOY para la carpeta ' + recibo.carpeta + ':\n\n' +
+        detalle +
+        '\n\nEste recibo (pagado por Transferencia) generar\u00eda un movimiento de Honorarios por $' + monto.toLocaleString('es-AR') + '.' +
+        '\n\n\u00bfEs la MISMA transferencia del inquilino?\n\u2022 Aceptar = NO crear un movimiento nuevo (ya est\u00e1 cargado por Mercado Pago)\n\u2022 Cancelar = crearlo igual (son cosas distintas)'
+      );
+      if (esLaMisma) {
+        showToast('No se cre\u00f3 un movimiento nuevo: ya hab\u00eda uno de Mercado Pago para esta carpeta hoy');
+        return;
+      }
+    }
+  }
+
   if (monto <= 0) {
     // Ya no corresponde honorarios (ej. se sacaron los gastos admin y no hay
     // comisión cargada): si había un movimiento automático, se elimina
@@ -9308,7 +9336,12 @@ function renderCaja() {
     if(medio && (m.medio||'Efectivo') !== medio) return false;
     return true;
   });
-  filtered.sort((a,b)=>(b._updatedAt||0)-(a._updatedAt||0) || b.fecha.localeCompare(a.fecha));
+  // Primero se agrupa por FECHA del movimiento (más reciente arriba); recién
+  // dentro de un mismo día se ordena por el momento en que se cargó (más
+  // reciente primero). Así, un movimiento atrasado que cargás hoy (ej. uno
+  // del 29/09 cargado el 1/10) aparece agrupado con los del 29/09, no
+  // arriba de todo mezclado con los de hoy.
+  filtered.sort((a,b)=> b.fecha.localeCompare(a.fecha) || (b._updatedAt||0)-(a._updatedAt||0));
 
   const totalIng = filtered.filter(m=>m.tipo==='ingreso').reduce((s,m)=>s+(parseFloat(m.monto)||0),0);
   const totalEgr = filtered.filter(m=>m.tipo==='egreso').reduce((s,m)=>s+(parseFloat(m.monto)||0),0);
@@ -9680,6 +9713,7 @@ function mostrarFormIdentificarMP(id, cuentaContraparteId) {
         <option value="inquilino">Inquilino (vivienda o cochera)</option>
         <option value="propietario">Propietario</option>
         <option value="clara">Clara D\u00e1valos G\u00fcemes</option>
+        <option value="martin">Mart\u00edn D\u00e1valos G\u00fcemes</option>
         <option value="otro">Otra persona</option>
       </select>
       <div id="mpid-detalle-${idCorto}"></div>
@@ -9709,6 +9743,8 @@ async function guardarIdentificacionMP(id, cuentaContraparteId, idCorto) {
   let nombre = '', carpeta = '';
   if (tipo === 'clara') {
     nombre = 'Clara D\u00e1valos G\u00fcemes';
+  } else if (tipo === 'martin') {
+    nombre = 'Mart\u00edn D\u00e1valos G\u00fcemes';
   } else if (tipo === 'inquilino') {
     const carp = document.getElementById('mpid-valor-'+idCorto)?.value;
     if (!carp) { showToast('Eleg\u00ed el inquilino', 'error'); return; }
@@ -9756,6 +9792,7 @@ function mostrarFormIdentificarMPDesdeCaja(movId, cuentaContraparteId) {
         <option value="inquilino">Inquilino (vivienda o cochera)</option>
         <option value="propietario">Propietario</option>
         <option value="clara">Clara D\u00e1valos G\u00fcemes</option>
+        <option value="martin">Mart\u00edn D\u00e1valos G\u00fcemes</option>
         <option value="otro">Otra persona</option>
       </select>
       <div id="mpidc-detalle-${idCorto}"></div>
@@ -9788,6 +9825,8 @@ async function guardarIdentificacionMPDesdeCaja(movId, cuentaContraparteId, idCo
   let nombre = '', carpeta = '';
   if (tipo === 'clara') {
     nombre = 'Clara D\u00e1valos G\u00fcemes';
+  } else if (tipo === 'martin') {
+    nombre = 'Mart\u00edn D\u00e1valos G\u00fcemes';
   } else if (tipo === 'inquilino') {
     const carp = document.getElementById('mpidc-valor-'+idCorto)?.value;
     if (!carp) { showToast('Eleg\u00ed el inquilino', 'error'); return; }
