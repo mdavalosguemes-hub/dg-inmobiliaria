@@ -2251,11 +2251,10 @@ function calcPunitorios() {
   if (!periodo || !alquiler || !fechaStr) { punitoriosEl.value = 0; calcTotal(); return; }
 
   const fechaRecibo = new Date(fechaStr + 'T00:00:00');
-  // Vencimiento = último día del mes ANTERIOR al período (equivale a "día 0"
-  // del mes del período), para que los días de atraso se cuenten desde el
-  // día 1 de ese mes: ej. si hoy es el 17 y el período es el mismo mes,
-  // da exactamente 17 días de atraso.
-  const vencimiento = new Date(periodo.anio, periodo.mes - 1, 0);
+  // Vencimiento = día 10 del mes del período: antes de esa fecha no
+  // corresponde ningún punitorio; los días de atraso se cuentan recién a
+  // partir del día 11.
+  const vencimiento = new Date(periodo.anio, periodo.mes - 1, 10);
   if (isNaN(fechaRecibo) || isNaN(vencimiento)) { punitoriosEl.value = 0; calcTotal(); return; }
 
   const MS_DIA = 24 * 60 * 60 * 1000;
@@ -6851,28 +6850,33 @@ function sincronizarHonorariosEnCaja(recibo) {
   const idx = data.findIndex(m => String(m.id) === String(idMov));
 
   // Solo al crear el movimiento por PRIMERA vez (no en cada edición
-  // posterior del recibo): si se paga por Transferencia, chequear si ya
-  // hay algún movimiento importado de Mercado Pago ese mismo día para esta
-  // misma carpeta, para no duplicar si es la misma transferencia del
-  // inquilino. No se compara el monto (casi nunca va a coincidir: el de MP
-  // suele ser el total que transfirió el inquilino, no solo la parte de
-  // honorarios) — se le muestra el detalle y decide la persona.
+  // posterior del recibo): si se paga por Transferencia, chequear si ya hay
+  // algún movimiento importado de Mercado Pago de esta misma carpeta, con el
+  // mismo monto exacto, en los últimos 10 días (el inquilino puede
+  // transferir un día y el recibo hacerse unos días después), para no
+  // duplicar si es la misma transferencia.
+  const DIAS_VENTANA_DUPLICADO_MP = 10;
   if (idx === -1 && recibo.formaPago === 'Transferencia' && monto > 0) {
-    const mpDelDia = visibles(data).filter(m =>
-      m.origenMercadoPagoId && String(m.carpeta) === String(recibo.carpeta) && m.fecha === recibo.fecha
-    );
-    if (mpDelDia.length) {
-      const detalle = mpDelDia.map(m =>
-        `\u2022 $${(parseFloat(m.monto)||0).toLocaleString('es-AR')} \u2014 ${m.concepto||''}${m.obs ? ' (' + m.obs + ')' : ''}`
+    const fechaRecibo = new Date(recibo.fecha + 'T00:00:00');
+    const mpCercanos = visibles(data).filter(m => {
+      if (!m.origenMercadoPagoId || String(m.carpeta) !== String(recibo.carpeta)) return false;
+      if ((parseFloat(m.monto) || 0) !== monto) return false;
+      const fechaMov = new Date(m.fecha + 'T00:00:00');
+      const diffDias = Math.round((fechaRecibo - fechaMov) / (24*60*60*1000));
+      return diffDias >= 0 && diffDias <= DIAS_VENTANA_DUPLICADO_MP;
+    });
+    if (mpCercanos.length) {
+      const detalle = mpCercanos.map(m =>
+        `\u2022 ${m.fecha} \u2014 $${(parseFloat(m.monto)||0).toLocaleString('es-AR')} \u2014 ${m.concepto||''}${m.obs ? ' (' + m.obs + ')' : ''}`
       ).join('\n');
       const esLaMisma = confirm(
-        'Ya hay ' + mpDelDia.length + ' movimiento(s) de Mercado Pago cargado(s) HOY para la carpeta ' + recibo.carpeta + ':\n\n' +
+        'Ya hay ' + mpCercanos.length + ' movimiento(s) de Mercado Pago cargado(s) en los \u00faltimos d\u00edas para la carpeta ' + recibo.carpeta + ':\n\n' +
         detalle +
         '\n\nEste recibo (pagado por Transferencia) generar\u00eda un movimiento de Honorarios por $' + monto.toLocaleString('es-AR') + '.' +
         '\n\n\u00bfEs la MISMA transferencia del inquilino?\n\u2022 Aceptar = NO crear un movimiento nuevo (ya est\u00e1 cargado por Mercado Pago)\n\u2022 Cancelar = crearlo igual (son cosas distintas)'
       );
       if (esLaMisma) {
-        showToast('No se cre\u00f3 un movimiento nuevo: ya hab\u00eda uno de Mercado Pago para esta carpeta hoy');
+        showToast('No se cre\u00f3 un movimiento nuevo: ya hab\u00eda uno de Mercado Pago para esta carpeta hace poco');
         return;
       }
     }
@@ -6946,6 +6950,13 @@ function editRecibo(id) {
 let _guardandoRecibo = false;
 async function saveRecibo() {
   if (_guardandoRecibo) return; // evita doble guardado por doble clic mientras se está procesando
+  // Pregunta explícita de Efectivo/Transferencia antes de guardar, para que
+  // nunca quede puesto por descuido lo que estaba seleccionado de antes.
+  const formaPagoEl = document.getElementById('r_forma_pago');
+  const esEfectivo = confirm(
+    '\u00bfC\u00f3mo se cobra este recibo?\n\nAceptar = Efectivo\nCancelar = Transferencia'
+  );
+  if (formaPagoEl) formaPagoEl.value = esEfectivo ? 'Efectivo' : 'Transferencia';
   _guardandoRecibo = true;
   const btnGuardar = document.getElementById('btn-guardar-recibo');
   if (btnGuardar) { btnGuardar.disabled = true; btnGuardar.textContent = 'Guardando...'; }
