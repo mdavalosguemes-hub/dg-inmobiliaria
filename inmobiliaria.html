@@ -9378,11 +9378,13 @@ function renderCaja() {
     .filter(p => !fecha || String(p.fecha).slice(0,10) === fecha)
     .map(p => {
       const idCorto = String(p.id).replace(/[^a-zA-Z0-9]/g,'');
-      const infoCelda = p.cuenta_contraparte_id
-        ? (p.entidad
-            ? `<b>${p.entidad}</b>${p.carpeta_sugerida?' · C'+p.carpeta_sugerida:''}`
-            : `<button class="btn-icon" title="Identificar esta cuenta" onclick="mostrarFormIdentificarMP('${p.id}','${p.cuenta_contraparte_id}')">🏷️ ¿Quién es?</button>`)
-        : 'Sin dato de cuenta';
+      // Si ya está identificada, se muestra el nombre/carpeta. Si no, se ofrece
+      // identificarla (si no hay un dato que identifique a la persona, como en
+      // las transferencias de un banco, vale solo para este movimiento).
+      const pistaRemitente = p.remitente_banco ? ` <span style="color:#888">(remitente: ${p.remitente_banco})</span>` : '';
+      const infoCelda = p.entidad
+        ? `<b>${p.entidad}</b>${p.carpeta_sugerida?' \u00b7 C'+p.carpeta_sugerida:''}`
+        : `<button class="btn-icon" title="Identificar" onclick="mostrarFormIdentificarMP('${p.id}','${p.cuenta_contraparte_id||''}')">\ud83c\udff7\ufe0f \u00bfQui\u00e9n es?</button>${pistaRemitente}`;
       return `<tr style="background:#fff8e1">
         <td>${String(p.fecha).slice(0,10)}</td>
         <td><span style="background:#ffe9a8;color:#8a6d00;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">🅿️ MP · ${p.tipo==='ingreso'?'Ingreso':'Egreso'}</span></td>
@@ -9774,12 +9776,19 @@ async function guardarIdentificacionMP(id, cuentaContraparteId, idCorto) {
     nombre = (document.getElementById('mpid-valor-'+idCorto)?.value || '').trim();
     if (!nombre) { showToast('Escrib\u00ed el nombre de la persona', 'error'); return; }
   }
-  const r = await fetch(SERVER_URL + '/api/mp/cuentas-conocidas', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ id_cuenta_mp: cuentaContraparteId, tipo, nombre, carpeta })
-  }).then(r=>r.json());
+  // Sin un dato que identifique a la persona (ej. transferencia de un banco):
+  // se completa solo ESTE movimiento, sin "recordar" nada para los siguientes.
+  const r = cuentaContraparteId
+    ? await fetch(SERVER_URL + '/api/mp/cuentas-conocidas', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ id_cuenta_mp: cuentaContraparteId, tipo, nombre, carpeta })
+      }).then(r=>r.json())
+    : await fetch(SERVER_URL + '/api/mp/identificar-movimiento', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ id, nombre, carpeta })
+      }).then(r=>r.json());
   if (!r.ok) { showToast(r.error || 'No se pudo guardar', 'error'); return; }
-  showToast('Cuenta identificada: ' + nombre);
+  showToast('Identificado: ' + nombre);
   await refrescarMpPendientesCache(true);
 }
 

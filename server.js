@@ -638,25 +638,52 @@ async function mpGuardarEstado(key, value) {
   );
 }
 
-// El id de la cuenta propia de Mercado Pago (para saber si un pago fue a
-// favor o en contra: si el "collector" es esta cuenta -> Ingreso, si el
-// "payer" es esta cuenta -> Egreso). Se pide una sola vez y se cachea en
-// memoria, ya que no cambia.
-let _mpMiCuentaId = null;
-async function mpObtenerMiCuentaId() {
-  if (_mpMiCuentaId) return _mpMiCuentaId;
+// Datos de la cuenta propia de Mercado Pago (id y documento). Sirven para
+// saber si un pago fue a favor o en contra (si el "collector" es esta cuenta
+// -> Ingreso, si el "payer" es esta cuenta -> Egreso) y, sobre todo, para
+// NO confundir un dato propio con el de la otra persona. Se pide una sola
+// vez y se cachea en memoria, ya que no cambia.
+let _mpMiCuenta = null;
+async function mpObtenerMiCuenta() {
+  if (_mpMiCuenta) return _mpMiCuenta;
   try {
     const resp = await fetch('https://api.mercadopago.com/users/me', {
       headers: { Authorization: 'Bearer ' + MP_ACCESS_TOKEN }
     });
-    if (!resp.ok) return null;
+    if (!resp.ok) return { id: null, doc: null };
     const data = await resp.json();
-    _mpMiCuentaId = data && data.id ? String(data.id) : null;
-    return _mpMiCuentaId;
+    _mpMiCuenta = {
+      id: data && data.id ? String(data.id) : null,
+      doc: data && data.identification && data.identification.number
+        ? String(data.identification.number).replace(/\D/g, '') : null
+    };
+    return _mpMiCuenta;
   } catch (e) {
     console.error('No se pudo obtener la cuenta propia de Mercado Pago:', e);
-    return null;
+    return { id: null, doc: null };
   }
+}
+
+// Una transferencia que llega DESDE UN BANCO ("Bank Transfer") no trae en
+// payer.id un número propio de cada persona (es un valor compartido por
+// todas, o la propia cuenta): usarlo para "recordar" quién es hizo que se
+// le pegara el mismo inquilino a todas las transferencias siguientes. Para
+// estas, la única identidad confiable es la que informa el banco sobre el
+// remitente (documento, cuenta o nombre); si no viene nada, se devuelve
+// null y NO se identifica sola (se elige a mano en cada movimiento).
+function mpEsTransferenciaBancaria(p) {
+  return p.operation_type === 'account_fund' || p.description === 'Bank Transfer' || p.payment_type_id === 'bank_transfer';
+}
+function mpIdentidadBancaria(p, mi) {
+  const tdata = p.point_of_interaction && p.point_of_interaction.transaction_data;
+  const bp = (tdata && tdata.bank_info && tdata.bank_info.payer) || {};
+  const doc = bp.identification && bp.identification.number ? String(bp.identification.number).replace(/\D/g, '') : '';
+  if (doc && doc !== (mi && mi.doc)) return 'doc:' + doc;
+  const cuenta = bp.account_id || bp.external_account_id;
+  if (cuenta) return 'acc:' + cuenta;
+  const nombre = String(bp.long_name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (nombre) return 'name:' + nombre;
+  return null;
 }
 
 async function sincronizarMercadoPago() {
@@ -666,7 +693,8 @@ async function sincronizarMercadoPago() {
     const desdeStr = await mpObtenerEstado('ultima_fecha_sincronizada', null);
     // Primera vez: traer solo los últimos 2 días, para no importar años de historial de una.
     const desde = desdeStr ? new Date(desdeStr) : new Date(ahora.getTime() - 2 * 24 * 60 * 60 * 1000);
-    const miCuentaId = await mpObtenerMiCuentaId();
+    const mi = await mpObtenerMiCuenta();
+    const miCuentaId = mi.id;
 
     const url = new URL('https://api.mercadopago.com/v1/payments/search');
     url.searchParams.set('sort', 'date_created');
@@ -709,6 +737,13 @@ async function sincronizarMercadoPago() {
       } else {
         tipoSugerido = (parseFloat(p.transaction_amount) || 0) >= 0 ? 'ingreso' : 'egreso';
         cuentaContraparteId = (tipoSugerido === 'ingreso') ? payerId : collectorId;
+      }
+      if (mpEsTransferenciaBancaria(p)) {
+        // Remitente real según el banco (nunca el payer.id, que es compartido).
+        cuentaContraparteId = mpIdentidadBancaria(p, mi);
+      } else if (cuentaContraparteId && miCuentaId && cuentaContraparteId === miCuentaId) {
+        // Movimiento entre cuentas propias (ej. reservas): no hay "otra persona".
+        cuentaContraparteId = null;
       }
 
       // Si esa cuenta ya fue identificada antes (por el usuario, en un
@@ -775,7 +810,7 @@ app.post('/api/mp/sincronizar-ahora', async (req, res) => {
 // GET /api/mp/pendientes -> lista de movimientos todavía sin revisar
 app.get('/api/mp/pendientes', async (req, res) => {
   const { rows } = await pool.query(
-    "SELECT id, fecha, tipo, monto, descripcion, entidad, medio_sugerido, cuenta_contraparte_id, carpeta_sugerida FROM mp_pendientes WHERE estado = 'pendiente' ORDER BY fecha DESC, created_at DESC"
+    "SELECT id, fecha, tipo, monto, descripcion, entidad, medio_sugerido, cuenta_contraparte_id, carpeta_sugerida, raw->'point_of_interaction'->'transaction_data'->'bank_info'->'payer'->>'long_name' AS remitente_banco FROM mp_pendientes WHERE estado = 'pendiente' ORDER BY fecha DESC, created_at DESC"
   );
   res.json({ ok: true, pendientes: rows });
 });
@@ -795,6 +830,10 @@ app.get('/api/mp/cuentas-conocidas', async (req, res) => {
 app.post('/api/mp/cuentas-conocidas', async (req, res) => {
   const { id_cuenta_mp, tipo, nombre, carpeta } = req.body || {};
   if (!id_cuenta_mp || !tipo) return res.status(400).json({ ok: false, error: 'Faltan datos (id_cuenta_mp, tipo)' });
+  // Nunca se "aprende" la cuenta propia: no identifica a ninguna otra persona
+  // y haría que se le pegue el mismo nombre/carpeta a movimientos distintos.
+  const mi = await mpObtenerMiCuenta();
+  if (mi.id && String(id_cuenta_mp) === mi.id) return res.json({ ok: true, aprendida: false });
   await pool.query(
     `INSERT INTO mp_cuentas_conocidas (id_cuenta_mp, tipo, nombre, carpeta) VALUES ($1,$2,$3,$4)
      ON CONFLICT (id_cuenta_mp) DO UPDATE SET tipo = EXCLUDED.tipo, nombre = EXCLUDED.nombre, carpeta = EXCLUDED.carpeta`,
@@ -805,6 +844,17 @@ app.post('/api/mp/cuentas-conocidas', async (req, res) => {
      WHERE cuenta_contraparte_id = $1 AND estado = 'pendiente'`,
     [String(id_cuenta_mp), nombre || '', carpeta || '']
   );
+  res.json({ ok: true });
+});
+
+// POST /api/mp/identificar-movimiento -> completa nombre/carpeta SOLO de ese
+// movimiento pendiente, sin "recordar" la cuenta (para los casos en que no hay
+// un dato que identifique a la persona, como las transferencias de un banco).
+app.post('/api/mp/identificar-movimiento', async (req, res) => {
+  const { id, nombre, carpeta } = req.body || {};
+  if (!id) return res.status(400).json({ ok: false, error: 'Falta id' });
+  await pool.query("UPDATE mp_pendientes SET entidad = $2, carpeta_sugerida = $3 WHERE id = $1 AND estado = 'pendiente'",
+    [String(id), nombre || '', carpeta || '']);
   res.json({ ok: true });
 });
 
@@ -855,8 +905,28 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'inmobiliaria.html'));
 });
 
+// Limpieza única (se corre una sola vez): antes, a las transferencias que
+// llegaban desde un banco y a los movimientos entre cuentas propias se les
+// pegaba el mismo "quién es" aprendido de otra. Se borran esas asociaciones
+// equivocadas y se limpian los pendientes que quedaron mal identificados,
+// para que se vuelvan a identificar bien.
+async function limpiezaMercadoPagoV1() {
+  const { rows } = await pool.query("SELECT value FROM mp_sync_estado WHERE key = 'limpieza_bancarias_v1'");
+  if (rows[0]) return;
+  const cond = "(raw->>'operation_type' = 'account_fund' OR raw->>'description' = 'Bank Transfer' OR raw->>'operation_type' = 'partition_transfer')";
+  await pool.query(
+    "DELETE FROM mp_cuentas_conocidas WHERE id_cuenta_mp IN (SELECT DISTINCT cuenta_contraparte_id FROM mp_pendientes WHERE cuenta_contraparte_id IS NOT NULL AND " + cond + ")"
+  );
+  await pool.query(
+    "UPDATE mp_pendientes SET entidad = '', carpeta_sugerida = '', cuenta_contraparte_id = NULL WHERE estado = 'pendiente' AND " + cond
+  );
+  await pool.query("INSERT INTO mp_sync_estado (key, value) VALUES ('limpieza_bancarias_v1', '1') ON CONFLICT (key) DO NOTHING");
+  console.log('Limpieza de identificaciones de transferencias bancarias (v1) aplicada');
+}
+
 const PORT = process.env.PORT || 8765;
 initSchema()
+  .then(() => limpiezaMercadoPagoV1().catch(e => console.error('Limpieza MP v1 fall\u00f3 (se sigue igual):', e)))
   .then(() => {
     app.listen(PORT, () => console.log(`Servidor DG Inmobiliaria escuchando en el puerto ${PORT}`));
   })
