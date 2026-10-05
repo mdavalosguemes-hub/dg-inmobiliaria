@@ -686,6 +686,55 @@ function mpIdentidadBancaria(p, mi) {
   return null;
 }
 
+// Calcula si el movimiento es Ingreso/Egreso y cuál es la "clave" de la otra
+// parte (lo que se recuerda para identificarla la próxima vez). La clave tiene
+// que ser algo que identifique de verdad a UNA persona o a UN servicio:
+//  - Entre cuentas de Mercado Pago: el id de la otra cuenta.
+//  - Transferencia desde un banco: solo un dato real del remitente (si no hay, null).
+//  - Factura de un servicio (Litoral Gas, etc.): el número de cliente de la
+//    factura ("srv:"), propio de cada propiedad. NO la empresa que cobra,
+//    porque es la misma para todas las propiedades.
+//  - Pago a un comercio (QR): el comercio ("com:"). Sirve para recordar el
+//    concepto, pero nunca la carpeta (ej. una oficina de impuestos cobra a
+//    muchas propiedades).
+function mpCalcularContraparte(p, mi) {
+  const miCuentaId = mi && mi.id;
+  // Mercado Pago no siempre manda estos datos con la misma forma: a veces
+  // vienen como objeto anidado (payer.id / collector.id) y a veces como
+  // campo plano (payer_id / collector_id). Se contemplan las dos.
+  const collectorId = (p.collector && p.collector.id != null) ? String(p.collector.id)
+                     : (p.collector_id != null ? String(p.collector_id) : null);
+  const payerId = (p.payer && p.payer.id != null) ? String(p.payer.id)
+                 : (p.payer_id != null ? String(p.payer_id) : null);
+
+  // Se compara contra la propia cuenta: si el que COBRA es esta cuenta, es un
+  // Ingreso; si el que PAGA es esta cuenta, es un Egreso. Solo si no se puede
+  // determinar, se usa el signo del monto como último recurso.
+  let tipoSugerido, cuentaContraparteId;
+  if (miCuentaId && collectorId === miCuentaId) {
+    tipoSugerido = 'ingreso'; cuentaContraparteId = payerId;
+  } else if (miCuentaId && payerId === miCuentaId) {
+    tipoSugerido = 'egreso'; cuentaContraparteId = collectorId;
+  } else {
+    tipoSugerido = (parseFloat(p.transaction_amount) || 0) >= 0 ? 'ingreso' : 'egreso';
+    cuentaContraparteId = (tipoSugerido === 'ingreso') ? payerId : collectorId;
+  }
+
+  if (mpEsTransferenciaBancaria(p)) {
+    cuentaContraparteId = mpIdentidadBancaria(p, mi);
+  } else if (p.operation_type === 'regular_payment' && tipoSugerido === 'egreso') {
+    const items = (p.additional_info && Array.isArray(p.additional_info.items)) ? p.additional_info.items : [];
+    const nroServicio = items[0] && items[0].description ? String(items[0].description).replace(/\s+/g, '') : '';
+    if (/\d{4,}/.test(nroServicio)) cuentaContraparteId = 'srv:' + (collectorId || '') + ':' + nroServicio;
+    else if (collectorId && collectorId !== miCuentaId) cuentaContraparteId = 'com:' + collectorId;
+    else cuentaContraparteId = null;
+  } else if (cuentaContraparteId && miCuentaId && cuentaContraparteId === miCuentaId) {
+    // Movimiento entre cuentas propias (ej. reservas): no hay "otra persona".
+    cuentaContraparteId = null;
+  }
+  return { tipoSugerido, cuentaContraparteId };
+}
+
 async function sincronizarMercadoPago() {
   if (!MP_ACCESS_TOKEN) return { ok: false, motivo: 'Sin MP_ACCESS_TOKEN configurado (integración apagada)' };
   try {
@@ -717,34 +766,7 @@ async function sincronizarMercadoPago() {
     for (const p of pagos) {
       const id = String(p.id);
       const monto = Math.abs(parseFloat(p.transaction_amount) || 0);
-      // Mercado Pago no siempre manda estos datos con la misma forma: a veces
-      // vienen como objeto anidado (payer.id / collector.id) y a veces como
-      // campo plano (payer_id / collector_id). Se contemplan las dos.
-      const collectorId = (p.collector && p.collector.id != null) ? String(p.collector.id)
-                         : (p.collector_id != null ? String(p.collector_id) : null);
-      const payerId = (p.payer && p.payer.id != null) ? String(p.payer.id)
-                     : (p.payer_id != null ? String(p.payer_id) : null);
-
-      // Se compara contra la propia cuenta: si el que COBRA es esta cuenta,
-      // es un Ingreso; si el que PAGA es esta cuenta, es un Egreso. Solo si
-      // no se puede determinar (falta el dato o no coincide con ninguno de
-      // los dos), se usa el signo del monto como último recurso.
-      let tipoSugerido, cuentaContraparteId;
-      if (miCuentaId && collectorId === miCuentaId) {
-        tipoSugerido = 'ingreso'; cuentaContraparteId = payerId;
-      } else if (miCuentaId && payerId === miCuentaId) {
-        tipoSugerido = 'egreso'; cuentaContraparteId = collectorId;
-      } else {
-        tipoSugerido = (parseFloat(p.transaction_amount) || 0) >= 0 ? 'ingreso' : 'egreso';
-        cuentaContraparteId = (tipoSugerido === 'ingreso') ? payerId : collectorId;
-      }
-      if (mpEsTransferenciaBancaria(p)) {
-        // Remitente real según el banco (nunca el payer.id, que es compartido).
-        cuentaContraparteId = mpIdentidadBancaria(p, mi);
-      } else if (cuentaContraparteId && miCuentaId && cuentaContraparteId === miCuentaId) {
-        // Movimiento entre cuentas propias (ej. reservas): no hay "otra persona".
-        cuentaContraparteId = null;
-      }
+      const { tipoSugerido, cuentaContraparteId } = mpCalcularContraparte(p, mi);
 
       // Si esa cuenta ya fue identificada antes (por el usuario, en un
       // movimiento anterior), se completa sola la carpeta y el nombre.
@@ -755,9 +777,12 @@ async function sincronizarMercadoPago() {
         const { rows: conocidas } = await pool.query(
           'SELECT * FROM mp_cuentas_conocidas WHERE id_cuenta_mp = $1', [cuentaContraparteId]
         );
-        if (conocidas[0]) {
+        const esComercio = String(cuentaContraparteId).startsWith('com:');
+        // A un comercio (QR) solo se le aplica lo aprendido si es un nombre/
+        // concepto libre ("otra persona"); nunca una carpeta ni un inquilino.
+        if (conocidas[0] && (!esComercio || conocidas[0].tipo === 'otro')) {
           entidad = conocidas[0].nombre || '';
-          carpetaSugerida = conocidas[0].carpeta || '';
+          carpetaSugerida = esComercio ? '' : (conocidas[0].carpeta || '');
           descripcion = conocidas[0].tipo === 'otro' ? (conocidas[0].nombre || descripcion) : descripcion;
         }
       }
@@ -834,6 +859,7 @@ app.post('/api/mp/cuentas-conocidas', async (req, res) => {
   // y haría que se le pegue el mismo nombre/carpeta a movimientos distintos.
   const mi = await mpObtenerMiCuenta();
   if (mi.id && String(id_cuenta_mp) === mi.id) return res.json({ ok: true, aprendida: false });
+  if (String(id_cuenta_mp).startsWith('com:') && tipo !== 'otro') return res.json({ ok: true, aprendida: false });
   await pool.query(
     `INSERT INTO mp_cuentas_conocidas (id_cuenta_mp, tipo, nombre, carpeta) VALUES ($1,$2,$3,$4)
      ON CONFLICT (id_cuenta_mp) DO UPDATE SET tipo = EXCLUDED.tipo, nombre = EXCLUDED.nombre, carpeta = EXCLUDED.carpeta`,
@@ -924,9 +950,37 @@ async function limpiezaMercadoPagoV1() {
   console.log('Limpieza de identificaciones de transferencias bancarias (v1) aplicada');
 }
 
+// Limpieza única: los pagos de servicios/comercios se identificaban por la
+// empresa que cobra (la misma para todas las propiedades), y se pegaba lo
+// aprendido de una factura a todas las demás. Se borran esas asociaciones y se
+// recalculan los pendientes con la clave correcta (número de cliente).
+async function limpiezaMercadoPagoV2() {
+  if (!MP_ACCESS_TOKEN) return; // sin token no se puede recalcular: se reintenta cuando haya
+  const { rows: fl } = await pool.query("SELECT value FROM mp_sync_estado WHERE key = 'limpieza_servicios_v2'");
+  if (fl[0]) return;
+  const mi = await mpObtenerMiCuenta();
+  if (!mi.id) return; // no se pudo consultar a Mercado Pago: se reintenta en el próximo arranque
+  await pool.query(
+    "DELETE FROM mp_cuentas_conocidas WHERE id_cuenta_mp IN (SELECT DISTINCT cuenta_contraparte_id FROM mp_pendientes " +
+    "WHERE cuenta_contraparte_id IS NOT NULL AND cuenta_contraparte_id NOT LIKE 'srv:%' AND cuenta_contraparte_id NOT LIKE 'com:%' " +
+    "AND raw->>'operation_type' = 'regular_payment')"
+  );
+  const { rows } = await pool.query("SELECT id, raw FROM mp_pendientes WHERE estado = 'pendiente' AND raw->>'operation_type' = 'regular_payment'");
+  for (const r of rows) {
+    const { cuentaContraparteId } = mpCalcularContraparte(r.raw, mi);
+    await pool.query(
+      "UPDATE mp_pendientes SET cuenta_contraparte_id = $2, entidad = '', carpeta_sugerida = '', descripcion = COALESCE(raw->>'description', descripcion) WHERE id = $1",
+      [r.id, cuentaContraparteId]
+    );
+  }
+  await pool.query("INSERT INTO mp_sync_estado (key, value) VALUES ('limpieza_servicios_v2', '1') ON CONFLICT (key) DO NOTHING");
+  console.log('Limpieza de pagos de servicios/comercios (v2) aplicada: ' + rows.length + ' pendientes recalculados');
+}
+
 const PORT = process.env.PORT || 8765;
 initSchema()
   .then(() => limpiezaMercadoPagoV1().catch(e => console.error('Limpieza MP v1 fall\u00f3 (se sigue igual):', e)))
+  .then(() => limpiezaMercadoPagoV2().catch(e => console.error('Limpieza MP v2 fall\u00f3 (se sigue igual):', e)))
   .then(() => {
     app.listen(PORT, () => console.log(`Servidor DG Inmobiliaria escuchando en el puerto ${PORT}`));
   })
