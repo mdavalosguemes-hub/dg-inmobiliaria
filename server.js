@@ -925,6 +925,7 @@ app.post('/api/mp/aprobar', async (req, res) => {
     obs: (pendiente.entidad ? pendiente.entidad + ' \u00b7 ' : '') + (obs ? obs + ' \u00b7 ' : '') + 'Importado de Mercado Pago',
     origenMercadoPagoId: pendiente.id,
     cuentaContraparteId: pendiente.cuenta_contraparte_id || null,
+    _creadoAt: Date.now(),
     _updatedAt: Date.now()
   };
   await guardarConFusion('caja_data', [...cajaActual, movimiento]);

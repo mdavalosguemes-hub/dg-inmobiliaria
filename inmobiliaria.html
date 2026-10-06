@@ -6903,6 +6903,7 @@ function sincronizarHonorariosEnCaja(recibo) {
     monto: monto,
     obs: 'Generado autom\u00e1ticamente desde el Recibo ' + (recibo.numero || ''),
     origenReciboId: recibo.id,
+    _creadoAt: idx >= 0 ? (data[idx]._creadoAt || ordenCargaMov(data[idx])) : Date.now(),
     _updatedAt: nowTS()
   };
   if (idx >= 0) data[idx] = mov; else data.push(mov);
@@ -9328,6 +9329,18 @@ function limpiarFiltrosCaja() {
   renderCaja();
 }
 
+// Momento en que se CARGÓ un movimiento (no en que se editó por última vez):
+// es lo que ordena los movimientos dentro de un mismo día, para que al
+// modificar uno se quede en su lugar y no salte arriba como si fuera nuevo.
+// Los movimientos viejos (sin _creadoAt) lo toman del propio id, que es la
+// fecha/hora de carga; los importados de Mercado Pago, de su marca más cercana.
+function ordenCargaMov(m) {
+  if (m._creadoAt) return m._creadoAt;
+  const dig = String(m.id || '').replace(/^HON_/, '');
+  if (/^\d{13}$/.test(dig)) return parseInt(dig, 10);
+  return m._updatedAt || 0;
+}
+
 function renderCaja() {
   initFiltroCajaAnio();
   const data = visibles(getData('caja_data')) || [];
@@ -9352,7 +9365,7 @@ function renderCaja() {
   // reciente primero). Así, un movimiento atrasado que cargás hoy (ej. uno
   // del 29/09 cargado el 1/10) aparece agrupado con los del 29/09, no
   // arriba de todo mezclado con los de hoy.
-  filtered.sort((a,b)=> b.fecha.localeCompare(a.fecha) || (b._updatedAt||0)-(a._updatedAt||0));
+  filtered.sort((a,b)=> b.fecha.localeCompare(a.fecha) || ordenCargaMov(b) - ordenCargaMov(a));
 
   const totalIng = filtered.filter(m=>m.tipo==='ingreso').reduce((s,m)=>s+(parseFloat(m.monto)||0),0);
   const totalEgr = filtered.filter(m=>m.tipo==='egreso').reduce((s,m)=>s+(parseFloat(m.monto)||0),0);
@@ -9470,8 +9483,15 @@ function saveMovimiento() {
   };
   if(!mov.concepto||!mov.monto){alert('Complet\u00e1 concepto y monto');return;}
   const data = getData('caja_data')||[];
-  if(currentMovId){const i=data.findIndex(x=>String(x.id)===String(currentMovId));if(i>=0)data[i]=mov;else data.push(mov);}
-  else data.push(mov);
+  if(currentMovId){
+    const i=data.findIndex(x=>String(x.id)===String(currentMovId));
+    if(i>=0){
+      // Se conserva el momento de carga original (para que no salte arriba) y
+      // los datos que no se editan acá (origen Mercado Pago/recibo, cuenta).
+      mov._creadoAt = data[i]._creadoAt || ordenCargaMov(data[i]);
+      data[i] = Object.assign({}, data[i], mov);
+    } else { mov._creadoAt = Date.now(); data.push(mov); }
+  } else { mov._creadoAt = Date.now(); data.push(mov); }
   setData('caja_data',data);
   closeModal('modal-movimiento');
   renderCaja();
@@ -9907,6 +9927,7 @@ async function guardarIdentificacionMPDesdeCaja(movId, cuentaContraparteId, idCo
       carpeta: carpeta || data[idx].carpeta || '',
       concepto: tipo === 'impuesto' ? 'Pago ' + nombre : data[idx].concepto,
       obs: (nombre ? nombre + ' \u00b7 ' : '') + 'Importado de Mercado Pago',
+      _creadoAt: data[idx]._creadoAt || ordenCargaMov(data[idx]),
       _updatedAt: nowTS()
     });
     setData('caja_data', data);
