@@ -6824,6 +6824,27 @@ function idMovimientoHonorarios(reciboId) { return 'HON_' + reciboId; }
 
 // Crea o actualiza (nunca duplica) el movimiento de Caja de honorarios
 // correspondiente a un recibo. No toca movimientos manuales.
+// Carpeta sin importar cómo esté escrita: "180", "C180", "c 180" son la misma.
+function normCarpetaMov(c) {
+  return String(c == null ? '' : c).toLowerCase().replace(/\s+/g, '').replace(/^c(?=\d)/, '');
+}
+
+// Ingresos por transferencia ya cargados con la misma carpeta y el mismo monto
+// que un recibo, hasta 10 días antes de la fecha del recibo (o el mismo día).
+function buscarTransferenciasDuplicadas(movs, recibo, monto, idPropio) {
+  const DIAS_VENTANA = 10;
+  const carpeta = normCarpetaMov(recibo.carpeta);
+  const fechaRecibo = new Date(recibo.fecha + 'T00:00:00');
+  return movs.filter(m => {
+    if (String(m.id) === String(idPropio)) return false;
+    if (m.tipo !== 'ingreso' || m.medio !== 'Transferencia') return false;
+    if (!carpeta || normCarpetaMov(m.carpeta) !== carpeta) return false;
+    if (Math.abs((parseFloat(m.monto) || 0) - monto) >= 0.5) return false;
+    const diffDias = Math.round((fechaRecibo - new Date(m.fecha + 'T00:00:00')) / (24*60*60*1000));
+    return diffDias >= 0 && diffDias <= DIAS_VENTANA;
+  });
+}
+
 function sincronizarHonorariosEnCaja(recibo) {
   const gastosAdmin = parseFloat((recibo.conceptos||{})['Gastos administrativos']) || 0;
   const prop = getData('prop_data').find(p => String(p.carpeta) === String(recibo.carpeta));
@@ -6849,34 +6870,35 @@ function sincronizarHonorariosEnCaja(recibo) {
   const data = getData('caja_data') || [];
   const idx = data.findIndex(m => String(m.id) === String(idMov));
 
-  // Solo al crear el movimiento por PRIMERA vez (no en cada edición
-  // posterior del recibo): si se paga por Transferencia, chequear si ya hay
-  // algún movimiento importado de Mercado Pago de esta misma carpeta, con el
-  // mismo monto exacto, en los últimos 10 días (el inquilino puede
-  // transferir un día y el recibo hacerse unos días después), para no
-  // duplicar si es la misma transferencia.
-  const DIAS_VENTANA_DUPLICADO_MP = 10;
-  if (idx === -1 && recibo.formaPago === 'Transferencia' && monto > 0) {
-    const fechaRecibo = new Date(recibo.fecha + 'T00:00:00');
-    const mpCercanos = visibles(data).filter(m => {
-      if (!m.origenMercadoPagoId || String(m.carpeta) !== String(recibo.carpeta)) return false;
-      if ((parseFloat(m.monto) || 0) !== monto) return false;
-      const fechaMov = new Date(m.fecha + 'T00:00:00');
-      const diffDias = Math.round((fechaRecibo - fechaMov) / (24*60*60*1000));
-      return diffDias >= 0 && diffDias <= DIAS_VENTANA_DUPLICADO_MP;
-    });
-    if (mpCercanos.length) {
-      const detalle = mpCercanos.map(m =>
+  // Si el recibo se paga por Transferencia, antes de crear (o de pasar a
+  // Transferencia) el movimiento de honorarios, se busca si ya hay cargado un
+  // ingreso por transferencia de la misma carpeta y el mismo monto en los
+  // últimos 10 días (el inquilino puede transferir un día y el recibo hacerse
+  // unos días después). Puede ser uno importado de Mercado Pago o uno cargado
+  // a mano. No se exige la marca "viene de Mercado Pago" porque se pierde si el
+  // movimiento se editó con el lápiz, y la carpeta se compara sin importar si
+  // está escrita "180" o "C180".
+  const pasaATransferencia = idx === -1 || data[idx]._deleted || data[idx].medio !== 'Transferencia';
+  if (pasaATransferencia && recibo.formaPago === 'Transferencia' && monto > 0) {
+    const cercanos = buscarTransferenciasDuplicadas(visibles(data), recibo, monto, idMov);
+    if (cercanos.length) {
+      const detalle = cercanos.map(m =>
         `\u2022 ${m.fecha} \u2014 $${(parseFloat(m.monto)||0).toLocaleString('es-AR')} \u2014 ${m.concepto||''}${m.obs ? ' (' + m.obs + ')' : ''}`
       ).join('\n');
       const esLaMisma = confirm(
-        'Ya hay ' + mpCercanos.length + ' movimiento(s) de Mercado Pago cargado(s) en los \u00faltimos d\u00edas para la carpeta ' + recibo.carpeta + ':\n\n' +
+        'Ya hay ' + cercanos.length + ' ingreso(s) por transferencia con el mismo monto para la carpeta ' + recibo.carpeta + ' en los \u00faltimos d\u00edas:\n\n' +
         detalle +
         '\n\nEste recibo (pagado por Transferencia) generar\u00eda un movimiento de Honorarios por $' + monto.toLocaleString('es-AR') + '.' +
-        '\n\n\u00bfEs la MISMA transferencia del inquilino?\n\u2022 Aceptar = NO crear un movimiento nuevo (ya est\u00e1 cargado por Mercado Pago)\n\u2022 Cancelar = crearlo igual (son cosas distintas)'
+        '\n\n\u00bfEs la MISMA transferencia?\n\u2022 Aceptar = NO crear un movimiento nuevo (ya est\u00e1 cargado)\n\u2022 Cancelar = crearlo igual (son cosas distintas)'
       );
       if (esLaMisma) {
-        showToast('No se cre\u00f3 un movimiento nuevo: ya hab\u00eda uno de Mercado Pago para esta carpeta hace poco');
+        // Si ya existía un movimiento propio de este recibo (estaba como
+        // Efectivo y se pasó a Transferencia), se elimina para no duplicar.
+        if (idx >= 0 && !data[idx]._deleted) {
+          data[idx] = Object.assign({}, data[idx], { _deleted: true, _updatedAt: nowTS() });
+          setData('caja_data', data);
+        }
+        showToast('No se cre\u00f3 un movimiento nuevo: ya estaba cargado');
         return;
       }
     }
