@@ -779,11 +779,14 @@ async function sincronizarMercadoPago() {
         );
         const esComercio = String(cuentaContraparteId).startsWith('com:');
         // A un comercio (QR) solo se le aplica lo aprendido si es un nombre/
-        // concepto libre ("otra persona"); nunca una carpeta ni un inquilino.
-        if (conocidas[0] && (!esComercio || conocidas[0].tipo === 'otro')) {
-          entidad = conocidas[0].nombre || '';
-          carpetaSugerida = esComercio ? '' : (conocidas[0].carpeta || '');
-          descripcion = conocidas[0].tipo === 'otro' ? (conocidas[0].nombre || descripcion) : descripcion;
+        // concepto libre ("otra persona") o un impuesto/servicio; nunca una
+        // carpeta ni un inquilino.
+        const c0 = conocidas[0];
+        if (c0 && (!esComercio || c0.tipo === 'otro' || c0.tipo === 'impuesto')) {
+          entidad = c0.nombre || '';
+          carpetaSugerida = esComercio ? '' : (c0.carpeta || '');
+          if (c0.tipo === 'otro') descripcion = c0.nombre || descripcion;
+          else if (c0.tipo === 'impuesto') descripcion = 'Pago ' + (c0.nombre || '');
         }
       }
 
@@ -859,16 +862,19 @@ app.post('/api/mp/cuentas-conocidas', async (req, res) => {
   // y haría que se le pegue el mismo nombre/carpeta a movimientos distintos.
   const mi = await mpObtenerMiCuenta();
   if (mi.id && String(id_cuenta_mp) === mi.id) return res.json({ ok: true, aprendida: false });
-  if (String(id_cuenta_mp).startsWith('com:') && tipo !== 'otro') return res.json({ ok: true, aprendida: false });
+  if (String(id_cuenta_mp).startsWith('com:') && tipo !== 'otro' && tipo !== 'impuesto') return res.json({ ok: true, aprendida: false });
   await pool.query(
     `INSERT INTO mp_cuentas_conocidas (id_cuenta_mp, tipo, nombre, carpeta) VALUES ($1,$2,$3,$4)
      ON CONFLICT (id_cuenta_mp) DO UPDATE SET tipo = EXCLUDED.tipo, nombre = EXCLUDED.nombre, carpeta = EXCLUDED.carpeta`,
     [String(id_cuenta_mp), tipo, nombre || '', carpeta || '']
   );
+  // A un comercio nunca se le aplica carpeta (lo cobra a muchas propiedades).
+  const carpetaAplicar = String(id_cuenta_mp).startsWith('com:') ? '' : (carpeta || '');
   await pool.query(
-    `UPDATE mp_pendientes SET entidad = $2, carpeta_sugerida = $3
+    `UPDATE mp_pendientes SET entidad = $2, carpeta_sugerida = $3,
+       descripcion = CASE WHEN $4 = 'impuesto' THEN 'Pago ' || $2 ELSE descripcion END
      WHERE cuenta_contraparte_id = $1 AND estado = 'pendiente'`,
-    [String(id_cuenta_mp), nombre || '', carpeta || '']
+    [String(id_cuenta_mp), nombre || '', carpetaAplicar, tipo]
   );
   res.json({ ok: true });
 });
@@ -877,10 +883,11 @@ app.post('/api/mp/cuentas-conocidas', async (req, res) => {
 // movimiento pendiente, sin "recordar" la cuenta (para los casos en que no hay
 // un dato que identifique a la persona, como las transferencias de un banco).
 app.post('/api/mp/identificar-movimiento', async (req, res) => {
-  const { id, nombre, carpeta } = req.body || {};
+  const { id, nombre, carpeta, concepto } = req.body || {};
   if (!id) return res.status(400).json({ ok: false, error: 'Falta id' });
-  await pool.query("UPDATE mp_pendientes SET entidad = $2, carpeta_sugerida = $3 WHERE id = $1 AND estado = 'pendiente'",
-    [String(id), nombre || '', carpeta || '']);
+  // Si viene "concepto" (ej. "Pago TGI"), reemplaza la descripción del movimiento.
+  await pool.query("UPDATE mp_pendientes SET entidad = $2, carpeta_sugerida = $3, descripcion = COALESCE(NULLIF($4, ''), descripcion) WHERE id = $1 AND estado = 'pendiente'",
+    [String(id), nombre || '', carpeta || '', concepto || '']);
   res.json({ ok: true });
 });
 

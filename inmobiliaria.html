@@ -9727,12 +9727,23 @@ function mostrarFormIdentificarMP(id, cuentaContraparteId) {
         <option value="propietario">Propietario</option>
         <option value="clara">Clara D\u00e1valos G\u00fcemes</option>
         <option value="martin">Mart\u00edn D\u00e1valos G\u00fcemes</option>
+        <option value="impuesto">Impuestos / servicios</option>
         <option value="otro">Otra persona</option>
       </select>
       <div id="mpid-detalle-${idCorto}"></div>
       <button class="btn btn-primary btn-sm" style="font-size:12px;padding:3px 8px" onclick="guardarIdentificacionMP('${id}','${cuentaContraparteId}','${idCorto}')">Guardar</button>
     </div>`;
   window['_mpOpciones_'+idCorto] = { optsInquilinos, optsPropietarios };
+}
+
+// Detalle del tipo "Impuestos / servicios": qué impuesto o servicio es y, si
+// corresponde a una propiedad, la carpeta (opcional).
+function htmlDetalleImpuestoMP(prefijo, idCorto) {
+  const tipos = ['API', 'TGI', 'EPE', 'Litoral Gas', 'Aguas', 'Expensas'];
+  const nombres = { 'API': 'API (Impuesto Inmobiliario)', 'TGI': 'TGI (Tasa General de Inmuebles)', 'EPE': 'EPE (Luz)' };
+  return `<select id="${prefijo}-valor-${idCorto}" class="form-control" style="font-size:12px;padding:4px"><option value="">\u00bfQu\u00e9 impuesto o servicio es?</option>` +
+    tipos.map(t => `<option value="${t}">${nombres[t] || t}</option>`).join('') +
+    `</select><input type="text" id="${prefijo}-carpeta-${idCorto}" class="form-control" style="font-size:12px;padding:4px;margin-top:4px" placeholder="Nro. de carpeta (opcional)">`;
 }
 
 function cambiarTipoIdentificarMP(idCorto) {
@@ -9745,6 +9756,8 @@ function cambiarTipoIdentificarMP(idCorto) {
     detalle.innerHTML = `<select id="mpid-valor-${idCorto}" class="form-control" style="font-size:12px;padding:4px"><option value="">Eleg\u00ed el propietario</option>${opts.optsPropietarios}</select>`;
   } else if (tipo === 'otro') {
     detalle.innerHTML = `<input type="text" id="mpid-valor-${idCorto}" class="form-control" style="font-size:12px;padding:4px" placeholder="Nombre de la persona">`;
+  } else if (tipo === 'impuesto') {
+    detalle.innerHTML = htmlDetalleImpuestoMP('mpid', idCorto);
   } else {
     detalle.innerHTML = '';
   }
@@ -9775,12 +9788,17 @@ async function guardarIdentificacionMP(id, cuentaContraparteId, idCorto) {
   } else if (tipo === 'otro') {
     nombre = (document.getElementById('mpid-valor-'+idCorto)?.value || '').trim();
     if (!nombre) { showToast('Escrib\u00ed el nombre de la persona', 'error'); return; }
+  } else if (tipo === 'impuesto') {
+    nombre = document.getElementById('mpid-valor-'+idCorto)?.value || '';
+    if (!nombre) { showToast('Eleg\u00ed qu\u00e9 impuesto o servicio es', 'error'); return; }
+    carpeta = (document.getElementById('mpid-carpeta-'+idCorto)?.value || '').trim();
   }
+  const concepto = tipo === 'impuesto' ? 'Pago ' + nombre : '';
   // Sin un dato que identifique a la persona (ej. transferencia de un banco):
   // se completa solo ESTE movimiento, sin "recordar" nada para los siguientes.
   // Un comercio (QR) con inquilino/propietario elegido no se recuerda (una
   // oficina de impuestos cobra a muchas propiedades): vale solo para este movimiento.
-  const aprender = cuentaContraparteId && !(String(cuentaContraparteId).startsWith('com:') && tipo !== 'otro');
+  const aprender = cuentaContraparteId && !(String(cuentaContraparteId).startsWith('com:') && !['otro','impuesto'].includes(tipo));
   const r = aprender
     ? await fetch(SERVER_URL + '/api/mp/cuentas-conocidas', {
         method: 'POST', headers: {'Content-Type':'application/json'},
@@ -9788,7 +9806,7 @@ async function guardarIdentificacionMP(id, cuentaContraparteId, idCorto) {
       }).then(r=>r.json())
     : await fetch(SERVER_URL + '/api/mp/identificar-movimiento', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ id, nombre, carpeta })
+        body: JSON.stringify({ id, nombre, carpeta, concepto })
       }).then(r=>r.json());
   if (!r.ok) { showToast(r.error || 'No se pudo guardar', 'error'); return; }
   showToast('Identificado: ' + nombre);
@@ -9816,6 +9834,7 @@ function mostrarFormIdentificarMPDesdeCaja(movId, cuentaContraparteId) {
         <option value="propietario">Propietario</option>
         <option value="clara">Clara D\u00e1valos G\u00fcemes</option>
         <option value="martin">Mart\u00edn D\u00e1valos G\u00fcemes</option>
+        <option value="impuesto">Impuestos / servicios</option>
         <option value="otro">Otra persona</option>
       </select>
       <div id="mpidc-detalle-${idCorto}"></div>
@@ -9837,6 +9856,8 @@ function cambiarTipoIdentificarMPCaja(idCorto) {
     detalle.innerHTML = `<select id="mpidc-valor-${idCorto}" class="form-control" style="font-size:12px;padding:4px"><option value="">Eleg\u00ed el propietario</option>${opts.optsPropietarios}</select>`;
   } else if (tipo === 'otro') {
     detalle.innerHTML = `<input type="text" id="mpidc-valor-${idCorto}" class="form-control" style="font-size:12px;padding:4px" placeholder="Nombre de la persona">`;
+  } else if (tipo === 'impuesto') {
+    detalle.innerHTML = htmlDetalleImpuestoMP('mpidc', idCorto);
   } else {
     detalle.innerHTML = '';
   }
@@ -9867,6 +9888,10 @@ async function guardarIdentificacionMPDesdeCaja(movId, cuentaContraparteId, idCo
   } else if (tipo === 'otro') {
     nombre = (document.getElementById('mpidc-valor-'+idCorto)?.value || '').trim();
     if (!nombre) { showToast('Escrib\u00ed el nombre de la persona', 'error'); return; }
+  } else if (tipo === 'impuesto') {
+    nombre = document.getElementById('mpidc-valor-'+idCorto)?.value || '';
+    if (!nombre) { showToast('Eleg\u00ed qu\u00e9 impuesto o servicio es', 'error'); return; }
+    carpeta = (document.getElementById('mpidc-carpeta-'+idCorto)?.value || '').trim();
   }
   // 1) Queda "aprendida" para la próxima vez que aparezca esta misma cuenta.
   const r = await fetch(SERVER_URL + '/api/mp/cuentas-conocidas', {
@@ -9880,6 +9905,7 @@ async function guardarIdentificacionMPDesdeCaja(movId, cuentaContraparteId, idCo
   if (idx >= 0) {
     data[idx] = Object.assign({}, data[idx], {
       carpeta: carpeta || data[idx].carpeta || '',
+      concepto: tipo === 'impuesto' ? 'Pago ' + nombre : data[idx].concepto,
       obs: (nombre ? nombre + ' \u00b7 ' : '') + 'Importado de Mercado Pago',
       _updatedAt: nowTS()
     });
