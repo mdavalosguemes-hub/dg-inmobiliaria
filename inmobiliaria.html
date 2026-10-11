@@ -482,7 +482,6 @@
   <div id="page-propietarios" class="page">
     <div class="topbar"><h2>Propietarios</h2>
       <div class="topbar-actions">
-        <button class="btn btn-secondary" onclick="limpiarPropietariosDuplicadosVacios()" title="Elimina propietarios repetidos que no tienen propiedades asignadas">🧹 Limpiar duplicados</button>
         <button class="btn btn-primary" onclick="newOwner()">+ Nuevo Propietario</button>
       </div>
     </div>
@@ -2345,7 +2344,7 @@ function getData(key) {
       const id = String(o.id || '').startsWith('o_') ? o.id : ('o_' + o.id);
       return Object.assign({}, o, {id: id}, overrides[id] || {});
     });
-    return base.concat(additions);
+    return base.concat(additions).filter(o => !o._deleted);
   }
   if (key === 'tenant_data') {
     const overrides = JSON.parse(localStorage.getItem('tenant_overrides') || '{}');
@@ -2711,6 +2710,34 @@ function migrarEliminarPropiedadesDuplicadasV2() {
     return p;
   });
   if (cambios > 0) setData('prop_additions', nuevas);
+  localStorage.setItem(FLAG, '1');
+}
+
+// Elimina los propietarios "Sapag" repetidos que no tienen propiedades
+// asignadas, dejando solo el que tiene carpetas (borrado suave).
+function migrarEliminarSapagDuplicadosV1() {
+  const FLAG = 'eliminar_sapag_duplicados_v1_done';
+  if (localStorage.getItem(FLAG) === '1') return;
+  const norm = t => String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  const sinCarpetas = o => !(o.carpetas||'').split(',').map(c=>c.trim()).filter(c=>c && c!=='-').length;
+  const todos = getData('owner_data');
+  const sapag = todos.filter(o => norm((o.nombre||'')+' '+(o.apellido||'')).includes('sapag'));
+  if (!sapag.some(o => !sinCarpetas(o))) return; // nada que conservar: no tocar
+  const vacios = sapag.filter(sinCarpetas);
+  if (vacios.length) {
+    const ids = new Set(vacios.map(o => String(o.id)));
+    const data = getData('owner_data');
+    // getData ya excluye borrados; leemos el crudo para marcarlos
+    const baseIds = new Set(INIT_OWNERS.map(o => String(o.id || '').startsWith('o_') ? o.id : ('o_' + o.id)));
+    const ov = JSON.parse(localStorage.getItem('owner_overrides') || '{}');
+    const ad = JSON.parse(localStorage.getItem('owner_additions') || '[]');
+    ids.forEach(id => { if (ov[id]) { ov[id]._deleted = true; ov[id]._updatedAt = nowTS(); } else if (baseIds.has(id)) { const b = data.find(o => String(o.id) === id); ov[id] = Object.assign({}, b, { _deleted: true, _updatedAt: nowTS() }); } });
+    ad.forEach(o => { if (ids.has(String(o.id))) { o._deleted = true; o._updatedAt = nowTS(); } });
+    const todosRaw = Object.values(ov).concat(ad);
+    // volver a guardar por la ruta normal (sincroniza con el servidor)
+    const base = INIT_OWNERS.map(o => { const id = String(o.id || '').startsWith('o_') ? o.id : ('o_' + o.id); return Object.assign({}, o, {id}, ov[id] || {}); });
+    setData('owner_data', base.concat(ad));
+  }
   localStorage.setItem(FLAG, '1');
 }
 
@@ -5650,33 +5677,6 @@ function renderPropietarios() {
   renderPag('pag-propietarios',ps,filtered.length);
 }
 
-// Detecta propietarios con el mismo nombre y apellido repetidos. Si en el
-// grupo hay al menos uno con propiedades (carpetas) asignadas, deja ese/os
-// y elimina (borrado suave) los que están vacíos. Nunca toca un grupo donde
-// todos estén vacíos ni un propietario con carpetas.
-function limpiarPropietariosDuplicadosVacios() {
-  const norm = t => String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
-  const vacio = o => !(o.carpetas||'').split(',').map(c=>c.trim()).filter(c=>c && c!=='-').length;
-  const owners = getData('owner_data') || [];
-  const grupos = {};
-  owners.forEach(o => {
-    const k = norm((o.nombre||'')+' '+(o.apellido||''));
-    if (!k || k === '-') return;
-    (grupos[k] = grupos[k] || []).push(o);
-  });
-  const aEliminar = [];
-  Object.values(grupos).forEach(g => {
-    if (g.length < 2) return;
-    if (!g.some(o => !vacio(o))) return;
-    g.filter(vacio).forEach(o => aEliminar.push(o));
-  });
-  if (!aEliminar.length) { showToast('No hay propietarios duplicados vac\u00edos'); return; }
-  const detalle = aEliminar.map(o => '\u2022 ' + (o.nombre||'') + ' ' + (o.apellido||'') + ' (sin propiedades)').join('\n');
-  if (!confirm('Se van a eliminar estos propietarios repetidos y vac\u00edos (se conserva el que tiene propiedades):\n\n' + detalle + '\n\n\u00bfConfirm\u00e1s?')) return;
-  aEliminar.forEach(o => deleteRecord('owner_data', o.id));
-  renderPropietarios();
-  showToast(aEliminar.length + ' propietario(s) duplicado(s) eliminado(s)');
-}
 function newOwner() { currentId=null; currentType='propietario'; document.getElementById('modal-owner-title').textContent='Nuevo Propietario'; document.getElementById('btn-del-owner').style.display='none'; ['carpetas','nombre','apellido','localidad','dir','tel','dni','email','cuit','banco','cta','alias','cbu','observaciones'].forEach(k=>{const el=document.getElementById('o_'+k);if(el)el.value='';}); openModal('modal-propietario'); }
 function editOwner(id) {
   const o=getData('owner_data').find(x=>String(x.id)===String(id)); if(!o) return;
@@ -8329,6 +8329,7 @@ async function iniciarApp() {
   migrarValoresHistoricosSeedTodosV2();
   migrarValoresHistoricosRestauracionV3();
   migrarEliminarPropiedadesDuplicadasV2();
+  migrarEliminarSapagDuplicadosV1();
   migrarCorreccionFechaInicioV1();
   sincronizarAlquileresConMesActual();
   // Recién ahora, con los datos reales del servidor ya en el navegador, se
