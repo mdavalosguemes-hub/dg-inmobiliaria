@@ -482,6 +482,7 @@
   <div id="page-propietarios" class="page">
     <div class="topbar"><h2>Propietarios</h2>
       <div class="topbar-actions">
+        <button class="btn btn-secondary" onclick="limpiarPropietariosDuplicadosVacios()" title="Elimina propietarios repetidos que no tienen propiedades asignadas">🧹 Limpiar duplicados</button>
         <button class="btn btn-primary" onclick="newOwner()">+ Nuevo Propietario</button>
       </div>
     </div>
@@ -2251,14 +2252,19 @@ function calcPunitorios() {
   if (!periodo || !alquiler || !fechaStr) { punitoriosEl.value = 0; calcTotal(); return; }
 
   const fechaRecibo = new Date(fechaStr + 'T00:00:00');
-  // Vencimiento = día 10 del mes del período: antes de esa fecha no
-  // corresponde ningún punitorio; los días de atraso se cuentan recién a
-  // partir del día 11.
-  const vencimiento = new Date(periodo.anio, periodo.mes - 1, 10);
-  if (isNaN(fechaRecibo) || isNaN(vencimiento)) { punitoriosEl.value = 0; calcTotal(); return; }
+  if (isNaN(fechaRecibo)) { punitoriosEl.value = 0; calcTotal(); return; }
 
+  // El pago del alquiler va del día 1 al 10 del mes del período: hasta el
+  // día 10 inclusive NO corresponde ningún punitorio. Desde el día 11 se
+  // cobra (alquiler x 0,3%) x días de atraso, contando los días desde el
+  // día 1 del mes (recibo del día 13 = 13 días de atraso).
+  const inicioMes = new Date(periodo.anio, periodo.mes - 1, 1);
+  const vencimiento = new Date(periodo.anio, periodo.mes - 1, 10);
   const MS_DIA = 24 * 60 * 60 * 1000;
-  const diasRetraso = Math.max(0, Math.round((fechaRecibo - vencimiento) / MS_DIA));
+  let diasRetraso = 0;
+  if (fechaRecibo > vencimiento) {
+    diasRetraso = Math.round((fechaRecibo - inicioMes) / MS_DIA) + 1;
+  }
 
   punitoriosEl.value = diasRetraso > 0
     ? Math.ceil((alquiler * 0.003 * diasRetraso) / 100) * 100
@@ -5642,6 +5648,34 @@ function renderPropietarios() {
     <td><button class="btn btn-secondary btn-sm" onclick='editOwner("${o.id}")'>\u270f\ufe0f</button></td>
   </tr>`).join('');
   renderPag('pag-propietarios',ps,filtered.length);
+}
+
+// Detecta propietarios con el mismo nombre y apellido repetidos. Si en el
+// grupo hay al menos uno con propiedades (carpetas) asignadas, deja ese/os
+// y elimina (borrado suave) los que están vacíos. Nunca toca un grupo donde
+// todos estén vacíos ni un propietario con carpetas.
+function limpiarPropietariosDuplicadosVacios() {
+  const norm = t => String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+  const vacio = o => !(o.carpetas||'').split(',').map(c=>c.trim()).filter(c=>c && c!=='-').length;
+  const owners = getData('owner_data') || [];
+  const grupos = {};
+  owners.forEach(o => {
+    const k = norm((o.nombre||'')+' '+(o.apellido||''));
+    if (!k || k === '-') return;
+    (grupos[k] = grupos[k] || []).push(o);
+  });
+  const aEliminar = [];
+  Object.values(grupos).forEach(g => {
+    if (g.length < 2) return;
+    if (!g.some(o => !vacio(o))) return;
+    g.filter(vacio).forEach(o => aEliminar.push(o));
+  });
+  if (!aEliminar.length) { showToast('No hay propietarios duplicados vac\u00edos'); return; }
+  const detalle = aEliminar.map(o => '\u2022 ' + (o.nombre||'') + ' ' + (o.apellido||'') + ' (sin propiedades)').join('\n');
+  if (!confirm('Se van a eliminar estos propietarios repetidos y vac\u00edos (se conserva el que tiene propiedades):\n\n' + detalle + '\n\n\u00bfConfirm\u00e1s?')) return;
+  aEliminar.forEach(o => deleteRecord('owner_data', o.id));
+  renderPropietarios();
+  showToast(aEliminar.length + ' propietario(s) duplicado(s) eliminado(s)');
 }
 function newOwner() { currentId=null; currentType='propietario'; document.getElementById('modal-owner-title').textContent='Nuevo Propietario'; document.getElementById('btn-del-owner').style.display='none'; ['carpetas','nombre','apellido','localidad','dir','tel','dni','email','cuit','banco','cta','alias','cbu','observaciones'].forEach(k=>{const el=document.getElementById('o_'+k);if(el)el.value='';}); openModal('modal-propietario'); }
 function editOwner(id) {
