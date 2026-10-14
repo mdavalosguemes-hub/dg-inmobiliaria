@@ -9464,6 +9464,7 @@ function renderCaja() {
         <td style="font-weight:600">$${(parseFloat(p.monto)||0).toLocaleString('es-AR')}</td>
         <td id="mp-info-${idCorto}" style="color:#5a6e82;font-size:12px">${infoCelda}</td>
         <td style="white-space:nowrap">
+          <button class="btn-icon" title="Invertir Ingreso/Egreso" onclick="invertirTipoMP('${p.id}')">\u21c4</button>
           <button class="btn-icon" title="Aceptar" onclick="aceptarMovimientoMP('${p.id}')">✅</button>
           <button class="btn-icon" title="Rechazar" onclick="rechazarMovimientoMP('${p.id}')">❌</button>
         </td>
@@ -9755,6 +9756,13 @@ async function sincronizarMercadoPagoAhora() {
   }
 }
 
+async function invertirTipoMP(id) {
+  await fetch(SERVER_URL + '/api/mp/invertir-tipo', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id})
+  });
+  await refrescarMpPendientesCache(true);
+}
+
 async function aceptarMovimientoMP(id) {
   const p = _mpPendientesCache.find(x => String(x.id) === String(id));
   if (!p) return;
@@ -9816,8 +9824,8 @@ function mostrarFormIdentificarMP(id, cuentaContraparteId) {
 // Detalle del tipo "Impuestos / servicios": qué impuesto o servicio es y, si
 // corresponde a una propiedad, la carpeta (opcional).
 function htmlDetalleImpuestoMP(prefijo, idCorto) {
-  const tipos = ['API', 'TGI', 'EPE', 'Litoral Gas', 'Aguas', 'Expensas'];
-  const nombres = { 'API': 'API (Impuesto Inmobiliario)', 'TGI': 'TGI (Tasa General de Inmuebles)', 'EPE': 'EPE (Luz)' };
+  const tipos = ['API', 'TGI', 'EPE', 'Litoral Gas', 'Aguas', 'Expensas', 'HALT', 'KITE PROP', 'Nubenet'];
+  const nombres = { 'API': 'API (Impuesto Inmobiliario)', 'TGI': 'TGI (Tasa General de Inmuebles)', 'EPE': 'EPE (Luz)', 'HALT': 'HALT (Alarma)', 'Nubenet': 'Nubenet (Internet)' };
   return `<select id="${prefijo}-valor-${idCorto}" class="form-control" style="font-size:12px;padding:4px"><option value="">\u00bfQu\u00e9 impuesto o servicio es?</option>` +
     tipos.map(t => `<option value="${t}">${nombres[t] || t}</option>`).join('') +
     `</select><input type="text" id="${prefijo}-carpeta-${idCorto}" class="form-control" style="font-size:12px;padding:4px;margin-top:4px" placeholder="Nro. de carpeta (opcional)">`;
@@ -9875,7 +9883,8 @@ async function guardarIdentificacionMP(id, cuentaContraparteId, idCorto) {
   // se completa solo ESTE movimiento, sin "recordar" nada para los siguientes.
   // Un comercio (QR) con inquilino/propietario elegido no se recuerda (una
   // oficina de impuestos cobra a muchas propiedades): vale solo para este movimiento.
-  const aprender = cuentaContraparteId && !(String(cuentaContraparteId).startsWith('com:') && !['otro','impuesto'].includes(tipo));
+  // Los impuestos/servicios no se recuerdan: valen solo para este movimiento.
+  const aprender = cuentaContraparteId && tipo !== 'impuesto' && !(String(cuentaContraparteId).startsWith('com:') && tipo !== 'otro');
   const r = aprender
     ? await fetch(SERVER_URL + '/api/mp/cuentas-conocidas', {
         method: 'POST', headers: {'Content-Type':'application/json'},
@@ -9970,12 +9979,15 @@ async function guardarIdentificacionMPDesdeCaja(movId, cuentaContraparteId, idCo
     if (!nombre) { showToast('Eleg\u00ed qu\u00e9 impuesto o servicio es', 'error'); return; }
     carpeta = (document.getElementById('mpidc-carpeta-'+idCorto)?.value || '').trim();
   }
-  // 1) Queda "aprendida" para la próxima vez que aparezca esta misma cuenta.
-  const r = await fetch(SERVER_URL + '/api/mp/cuentas-conocidas', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ id_cuenta_mp: cuentaContraparteId, tipo, nombre, carpeta })
-  }).then(r=>r.json());
-  if (!r.ok) { showToast(r.error || 'No se pudo guardar', 'error'); return; }
+  // 1) Queda "aprendida" para la próxima vez que aparezca esta misma cuenta
+  //    (salvo impuestos/servicios, que nunca se completan solos).
+  if (tipo !== 'impuesto' && cuentaContraparteId) {
+    const r = await fetch(SERVER_URL + '/api/mp/cuentas-conocidas', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ id_cuenta_mp: cuentaContraparteId, tipo, nombre, carpeta })
+    }).then(r=>r.json());
+    if (!r.ok) { showToast(r.error || 'No se pudo guardar', 'error'); return; }
+  }
   // 2) Corrige YA este movimiento puntual (carpeta + observaciones).
   const data = getData('caja_data') || [];
   const idx = data.findIndex(m => String(m.id) === String(movId));

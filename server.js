@@ -720,6 +720,13 @@ function mpCalcularContraparte(p, mi) {
     cuentaContraparteId = (tipoSugerido === 'ingreso') ? payerId : collectorId;
   }
 
+  // Reservas (partition_transfer): es plata propia que se mueve entre la
+  // cuenta y la reserva. Al apartar dinero a la reserva SALE de la caja
+  // (Egreso); al sacarlo de la reserva VUELVE a la caja (Ingreso).
+  if (p.operation_type === 'partition_transfer') {
+    return { tipoSugerido: mpDireccionReserva(p, tipoSugerido), cuentaContraparteId: null };
+  }
+
   if (mpEsTransferenciaBancaria(p)) {
     cuentaContraparteId = mpIdentidadBancaria(p, mi);
   } else if (p.operation_type === 'regular_payment' && tipoSugerido === 'egreso') {
@@ -733,6 +740,24 @@ function mpCalcularContraparte(p, mi) {
     cuentaContraparteId = null;
   }
   return { tipoSugerido, cuentaContraparteId };
+}
+
+
+// Determina si una reserva (partition_transfer) es un aporte a la reserva
+// (Egreso de la caja) o un retiro de la reserva (Ingreso). Se mira, en orden:
+// el sentido que informa Mercado Pago (inflow/outflow, money_in/out, etc.),
+// y el signo del monto. Si no hay ninguna pista, se deja lo calculado antes.
+// De todas formas el usuario puede invertirlo con el botón \u21c4 antes de aceptar.
+function mpDireccionReserva(p, porDefecto) {
+  const bi = (p.point_of_interaction && p.point_of_interaction.business_info) || {};
+  const pista = [bi.sub_unit, bi.unit, bi.branch, p.description, p.status_detail,
+    p.point_of_interaction && p.point_of_interaction.sub_type, p.point_of_interaction && p.point_of_interaction.type]
+    .filter(Boolean).join(' ').toLowerCase();
+  if (/outflow|money_out|to_partition|deposit_partition|reserve_in|\bsave\b/.test(pista)) return 'egreso';
+  if (/inflow|money_in|from_partition|withdraw|reserve_out/.test(pista)) return 'ingreso';
+  const monto = parseFloat(p.transaction_amount);
+  if (!isNaN(monto) && monto < 0) return 'egreso';
+  return porDefecto;
 }
 
 async function sincronizarMercadoPago() {
@@ -782,7 +807,9 @@ async function sincronizarMercadoPago() {
         // concepto libre ("otra persona") o un impuesto/servicio; nunca una
         // carpeta ni un inquilino.
         const c0 = conocidas[0];
-        if (c0 && (!esComercio || c0.tipo === 'otro' || c0.tipo === 'impuesto')) {
+        // Los impuestos/servicios NUNCA se completan solos: ingresan tal cual y
+        // el usuario los elige al aceptar (si no, un TGI se volvía "Aguas").
+        if (c0 && c0.tipo !== 'impuesto' && (!esComercio || c0.tipo === 'otro')) {
           entidad = c0.nombre || '';
           carpetaSugerida = esComercio ? '' : (c0.carpeta || '');
           if (c0.tipo === 'otro') descripcion = c0.nombre || descripcion;
@@ -888,6 +915,16 @@ app.post('/api/mp/identificar-movimiento', async (req, res) => {
   // Si viene "concepto" (ej. "Pago TGI"), reemplaza la descripción del movimiento.
   await pool.query("UPDATE mp_pendientes SET entidad = $2, carpeta_sugerida = $3, descripcion = COALESCE(NULLIF($4, ''), descripcion) WHERE id = $1 AND estado = 'pendiente'",
     [String(id), nombre || '', carpeta || '', concepto || '']);
+  res.json({ ok: true });
+});
+
+
+// POST /api/mp/invertir-tipo -> cambia Ingreso<->Egreso de un pendiente (por si
+// Mercado Pago no informa bien el sentido, ej. reservas).
+app.post('/api/mp/invertir-tipo', async (req, res) => {
+  const { id } = req.body || {};
+  if (!id) return res.status(400).json({ ok: false, error: 'Falta id' });
+  await pool.query("UPDATE mp_pendientes SET tipo = CASE WHEN tipo = 'ingreso' THEN 'egreso' ELSE 'ingreso' END WHERE id = $1 AND estado = 'pendiente'", [String(id)]);
   res.json({ ok: true });
 });
 
