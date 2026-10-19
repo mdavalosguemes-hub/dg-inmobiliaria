@@ -4011,6 +4011,38 @@ function setFacturasData(arr) {
   // Mantener siempre ordenado por número de carpeta
   arr.sort((a,b) => (parseFloat(a.carpeta)||0) - (parseFloat(b.carpeta)||0));
   localStorage.setItem('facturas_data', JSON.stringify(arr));
+  // Antes las facturas se guardaban SOLO en este navegador (no iban al
+  // servidor ni al backup): si se limpiaba el navegador o se abría desde otra
+  // PC, los montos cargados se perdían. Ahora también se mandan al servidor.
+  try { if (typeof usingLocalMode !== 'undefined' && !usingLocalMode && typeof _postToServer === 'function') _postToServer('facturas_data', arr); } catch (e) {}
+  try { if (typeof autoBackupSilent === 'function') setTimeout(autoBackupSilent, 300); } catch (e) {}
+}
+
+// Fusiona la copia local de Facturas con la del servidor, celda por celda:
+// nunca se pierde un monto/factura cargado en este navegador que el servidor
+// no tenga. Devuelve {merged, cambio} (cambio=true si hay algo para subir).
+function fusionarFacturasLocalConServidor(local, servidor) {
+  const out = JSON.parse(JSON.stringify(Array.isArray(servidor) ? servidor : []));
+  let cambio = false;
+  const vacio = v => v === undefined || v === null || String(v).trim() === '';
+  (Array.isArray(local) ? local : []).forEach(lf => {
+    if (!lf || lf.id === undefined) return;
+    const sf = out.find(x => String(x.id) === String(lf.id));
+    if (!sf) { out.push(JSON.parse(JSON.stringify(lf))); cambio = true; return; }
+    const localMasNuevo = (lf._updatedAt || 0) > (sf._updatedAt || 0);
+    if (localMasNuevo && !!lf._deleted !== !!sf._deleted) { sf._deleted = !!lf._deleted; cambio = true; }
+    if (!sf.meses) sf.meses = {};
+    Object.entries(lf.meses || {}).forEach(([mk, lm]) => {
+      if (!sf.meses[mk]) { sf.meses[mk] = Object.assign({ monto: '', factura: '' }, lm); if (!vacio(lm.monto) || !vacio(lm.factura)) cambio = true; return; }
+      ['monto', 'factura'].forEach(campo => {
+        const lv = lm && lm[campo], sv = sf.meses[mk][campo];
+        if (vacio(lv)) return;
+        if (vacio(sv) || (String(lv) !== String(sv) && localMasNuevo)) { sf.meses[mk][campo] = lv; cambio = true; }
+      });
+    });
+    if (cambio && localMasNuevo) sf._updatedAt = lf._updatedAt;
+  });
+  return { merged: out, cambio };
 }
 
 function initFacturasFiltros() {
@@ -8824,10 +8856,23 @@ async function loadAllFromServer() {
       //    que todavía tenga un guardado sin confirmar en el servidor (por más
       //    que el flush de arriba haya fallado de nuevo, ej. servidor caído).
       const pending = _getPendingQueue();
+      // Facturas: antes vivían solo en este navegador. Antes de pisar la
+      // copia local con la del servidor, se fusionan celda por celda y lo
+      // que solo existía acá se sube al servidor (no se pierde nada).
+      let facturasParaSubir = null;
+      try {
+        const localFact = JSON.parse(localStorage.getItem('facturas_data') || 'null');
+        if (Array.isArray(localFact)) {
+          const fz = fusionarFacturasLocalConServidor(localFact, d.data.facturas_data);
+          d.data.facturas_data = fz.merged;
+          if (fz.cambio || d.data.facturas_data === undefined) facturasParaSubir = fz.merged;
+        }
+      } catch (e) {}
       Object.entries(d.data).forEach(([key, val]) => {
         if (pending[key]) return;
         localStorage.setItem(key, JSON.stringify(val));
       });
+      if (facturasParaSubir) { try { _postToServer('facturas_data', facturasParaSubir); } catch (e) {} }
       _serverDataLoaded = true;
       return true;
     }
@@ -10584,7 +10629,7 @@ function _getAllAppDataKeys() {
     'docrenov_data','docajuste_data','ajprop_data',
     'cochera_data','fichas_venta_data','fichas_alquiler_data',
     'recibos_llaves','arreglos_data','valores_historicos',
-    'dg_docs_escritura','liquidacion_data'
+    'dg_docs_escritura','liquidacion_data','facturas_data'
   ];
   const dinamicas = Object.keys(localStorage).filter(k => k.startsWith('alq_props_'));
   return Array.from(new Set([...fijas, ...dinamicas]));

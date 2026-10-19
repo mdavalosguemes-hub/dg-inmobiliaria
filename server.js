@@ -160,6 +160,29 @@ function esColeccionFusionable(value) {
   return Array.isArray(value) && value.every(x => x && typeof x === 'object' && !Array.isArray(x) && 'id' in x);
 }
 
+
+// Facturas: el registro ganador (el más nuevo) puede traer vacíos los montos
+// de un mes que la otra copia sí tenía cargados (ej. una PC con la lista
+// vieja). Se completan, celda por celda, solo los datos que estén vacíos.
+function completarMesesFacturas(resultado, existentes, entrantes) {
+  const vacio = v => v === undefined || v === null || String(v).trim() === '';
+  const fuentes = [].concat(existentes || [], entrantes || []);
+  for (const rec of resultado) {
+    if (!rec || rec.id === undefined) continue;
+    rec.meses = rec.meses || {};
+    for (const o of fuentes) {
+      if (!o || String(o.id) !== String(rec.id) || !o.meses) continue;
+      for (const [mk, cel] of Object.entries(o.meses)) {
+        if (!rec.meses[mk]) rec.meses[mk] = { monto: '', factura: '' };
+        for (const campo of ['monto', 'factura']) {
+          if (vacio(rec.meses[mk][campo]) && !vacio(cel && cel[campo])) rec.meses[mk][campo] = cel[campo];
+        }
+      }
+    }
+  }
+  return resultado;
+}
+
 function fusionarPorId(existentes, entrantes) {
   const mapa = new Map();
   for (const rec of existentes) {
@@ -363,6 +386,7 @@ async function guardarConFusion(key, value) {
     const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
     const existentes = Array.isArray(rows[0] && rows[0].value) ? rows[0].value : [];
     valorFinal = fusionarPorId(existentes, value);
+    if (key === 'facturas_data') valorFinal = completarMesesFacturas(valorFinal, existentes, value);
   } else if (key === 'valores_historicos') {
     const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
     const existente = esObjetoPlano(rows[0] && rows[0].value) ? rows[0].value : {};
