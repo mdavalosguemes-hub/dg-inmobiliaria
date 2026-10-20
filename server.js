@@ -380,7 +380,7 @@ function fusionarValoresHistoricos(existente, entrante) {
 // Mercado Pago hacia Caja), para que ambos caminos sean igual de seguros.
 async function guardarConFusion(key, value) {
   let valorFinal = value;
-  const CLAVES_OBJETO_FUSIONABLE = ['prop_overrides', 'owner_overrides', 'tenant_overrides'];
+  const CLAVES_OBJETO_FUSIONABLE = ['prop_overrides', 'owner_overrides', 'tenant_overrides', 'alq_modalidad'];
   const CLAVES_UNION_SIMPLE = ['prop_deleted'];
   if (esColeccionFusionable(value)) {
     const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
