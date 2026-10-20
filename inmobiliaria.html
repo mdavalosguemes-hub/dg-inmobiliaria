@@ -447,6 +447,7 @@
           </div>
           <button class="btn btn-secondary btn-sm" onclick="alqAbrirModalAgregar()">+ Agregar propiedad</button>
           <button class="btn btn-secondary btn-sm" onclick="alqRecalcularMesActualDesdeHistoricos()" title="Vuelve a tomar Alquiler y Gastos administrativos de Valores Históricos para el mes/año seleccionado">🔄 Actualizar según Valores Históricos</button>
+          <button class="btn btn-secondary btn-sm" onclick="alqRearmarDesdeMesAnterior()" title="Trae todos los ítems del mes anterior con el período avanzado (pide confirmación)">📋 Rearmar desde mes anterior</button>
           <button class="btn btn-primary btn-sm" onclick="exportAllAlqPDF()">🖨 Exportar todos en PDF</button>
         </div>
         <!-- Grilla de propiedades del mes -->
@@ -3171,52 +3172,80 @@ function alqRemoveItem(btn, idx, mes, anio) {
 // calculan con la misma fórmula que ya usa el sistema (3% redondeado hacia
 // arriba a $100). No se tocan cocheras ni ítems que el usuario haya
 // renombrado, y no se pierde ni se agrega ningún ítem extra que ya existiera.
-// Conceptos cuyo período corresponde al MES ANTERIOR al que se está
-// liquidando (regla especial pedida por el usuario). Cualquier otro
-// concepto con período (TGI, Aguas, etc., o lo que se haya agregado a
-// mano) usa el mes que se está liquidando.
-const ALQ_CONCEPTOS_MES_ANTERIOR = ['expensas extraordinarias', 'expensa extraordinaria', 'expensas', 'expensa'];
+// ── Períodos de los ítems al pasar de un mes a otro ──
+// Regla: cada período "MM/AA" que figura en un ítem avanza la misma cantidad de
+// meses que avanza el mensual (TGI 10/26 → TGI 11/26; EPE 09/26 → EPE 10/26;
+// Expensas 09/26 → Expensas 10/26). Así se conserva el desfase propio de cada
+// concepto. Los honorarios (C1/2), sellados, averiguaciones, punitorios, deudas
+// y diferencias NO se tocan: el usuario los edita a mano.
+const ALQ_NO_AVANZAR_PERIODO = ['honorario', 'sellado', 'averiguaci', 'punitorio', 'deuda', 'diferencia', 'demorad'];
 
-function alqEsConceptoMesAnterior(desc) {
-  const base = (desc || '').toLowerCase();
-  return ALQ_CONCEPTOS_MES_ANTERIOR.some(k => base.includes(k));
+function alqAvanzarPeriodoDesc(desc, delta) {
+  if (!desc || !delta) return desc;
+  const base = String(desc).toLowerCase();
+  if (ALQ_NO_AVANZAR_PERIODO.some(k => base.includes(k))) return desc;
+  const re = /(?<![\d\/-])(0?[1-9]|1[0-2])\s*\/\s*(\d{4}|\d{2})(?![\d\/])/g;
+  return String(desc).replace(re, (m, mm, yy) => {
+    let anio = parseInt(yy, 10);
+    const largo = yy.length === 4;
+    if (!largo && anio < 20) return m;       // no parece un período (ej. "5/10")
+    if (!largo) anio += 2000;
+    let t = anio * 12 + (parseInt(mm, 10) - 1) + delta;
+    const nAnio = Math.floor(t / 12), nMes = (t % 12) + 1;
+    return String(nMes).padStart(2, '0') + '/' + (largo ? String(nAnio) : String(nAnio).slice(-2));
+  });
 }
 
-function alqPeriodoTexto(mes, anio) {
-  const mm = String(mes).padStart(2, '0');
-  const aa = String(anio).slice(-2);
-  return `${mm}/${aa}`;
-}
-
-// Busca un período "MM/AA" o "MM/AAAA" dentro del texto de un ítem (ej.
-// "TGI 09/26", "Expensas 08/26") y lo reemplaza por el período que
-// corresponde al nuevo mes que se está generando, según el tipo de
-// concepto (mismo mes, o mes anterior para Expensas/Expensas
-// extraordinarias). Si el ítem no tiene ningún período en el texto (ej.
-// "Monto alquiler"), lo deja exactamente igual.
-function alqActualizarPeriodoDesc(desc, mesNuevo, anioNuevo) {
-  if (!desc) return desc;
-  const re = /(\d{1,2})\s*\/\s*(\d{2,4})/;
-  if (!re.test(desc)) return desc;
-  let mesObjetivo = mesNuevo, anioObjetivo = anioNuevo;
-  if (alqEsConceptoMesAnterior(desc)) {
-    mesObjetivo = mesNuevo - 1;
-    if (mesObjetivo < 1) { mesObjetivo = 12; anioObjetivo = anioNuevo - 1; }
-  }
-  return desc.replace(re, alqPeriodoTexto(mesObjetivo, anioObjetivo));
-}
-
-// Aplica la actualización de período a TODOS los ítems de TODAS las
-// propiedades/cocheras del mensual que se está generando (no solo
-// "Monto alquiler"/"Monto Gastos administrativos", que ya se resuelven
-// aparte). No se pierde ni se agrega ningún ítem: se mantiene la misma
-// lista y orden, solo se actualiza el texto del período cuando corresponde.
-function alqActualizarPeriodosItems(props, mesNuevo, anioNuevo) {
+function alqAvanzarPeriodosItems(props, delta) {
   return props.map(p => {
     if (!Array.isArray(p.items) || !p.items.length) return p;
-    const items = p.items.map(it => ({ ...it, desc: alqActualizarPeriodoDesc(it.desc, mesNuevo, anioNuevo) }));
-    return { ...p, items };
+    return { ...p, items: p.items.map(it => ({ ...it, desc: alqAvanzarPeriodoDesc(it.desc, delta) })) };
   });
+}
+
+// Desde noviembre 2026 el Alquiler y los Gastos administrativos siguen a
+// Valores Históricos del mes, salvo que el usuario haya cargado el alquiler a
+// mano (marca _alqManual, que se pone en alqGuardar).
+function alqSincronizarHistoricosMes(props, mes, anio) {
+  if (!alqMesPosterior(parseInt(mes), parseInt(anio), 11, 2026)) return { props, cambio: false };
+  const manuales = props.map(p => !!p._alqManual);
+  const actualizados = alqActualizarItemsDesdeValoresHistoricos(props, mes, anio);
+  const out = props.map((p, i) => manuales[i] ? p : actualizados[i]);
+  const cambio = JSON.stringify(out) !== JSON.stringify(props);
+  return { props: out, cambio };
+}
+
+// Rearma el mes mostrado con los ítems del mes anterior (período avanzado).
+// Es una acción explícita y pide confirmación; guarda copia de seguridad.
+function alqRearmarDesdeMesAnterior() {
+  const mes  = parseInt(document.getElementById('alq-mes')?.value  || (new Date().getMonth()+1));
+  const anio = parseInt(document.getElementById('alq-anio')?.value || new Date().getFullYear());
+  let mp = mes - 1, ap = anio; if (mp < 1) { mp = 12; ap--; }
+  const prevRaw = localStorage.getItem(`alq_props_${ap}_${mp}`);
+  if (!prevRaw) { showToast('No hay mes anterior cargado'); return; }
+  if (!confirm(`Se van a traer a ${mes}/${anio} todos los ítems de ${mp}/${ap} (impuestos, servicios, expensas, honorarios, sellados, averiguaciones) con el período avanzado un mes.\n\nEl alquiler y los gastos administrativos se toman de Valores Históricos. Los ítems actuales de este mes serán reemplazados (se guarda una copia de seguridad). ¿Continuar?`)) return;
+  const prev = JSON.parse(prevRaw);
+  const actual = alqGetStoredProps(mes, anio);
+  try { localStorage.setItem(`alq_backup_rearmar_${anio}_${mes}_${Date.now()}`, JSON.stringify(actual)); } catch (e) {}
+  const clave = p => String(p.tipo || '') + '|' + String(p.carpeta || '') + '|' + (p.tipo === 'cochera' ? String(p.direccion || '').trim().toLowerCase() : '');
+  const mapPrev = {};
+  prev.forEach(p => { mapPrev[clave(p)] = p; });
+  const esAlq = it => /monto alquiler/i.test(it?.desc || '');
+  const esGas = it => /gastos administrativos/i.test(it?.desc || '');
+  let nuevo = actual.map(c => {
+    const pv = mapPrev[clave(c)];
+    if (!pv || !Array.isArray(pv.items)) return c;
+    const pvAv = alqAvanzarPeriodosItems([pv], 1)[0].items;
+    const alq = (c.items || []).find(esAlq) || pvAv.find(esAlq);
+    const gas = (c.items || []).find(esGas) || pvAv.find(esGas);
+    const resto = pvAv.filter(it => !esAlq(it) && !esGas(it));
+    const items = [alq, gas].filter(Boolean).concat(resto);
+    return { ...c, items, _alqManual: false };
+  });
+  nuevo = alqActualizarItemsDesdeValoresHistoricos(nuevo, mes, anio);
+  alqSaveProps(mes, anio, nuevo);
+  renderAlquileresMensuales();
+  showToast('Mes rearmado desde el mes anterior ✓');
 }
 
 function alqActualizarItemsDesdeValoresHistoricos(props, mes, anio) {
@@ -3246,8 +3275,7 @@ function alqRecalcularMesActualDesdeHistoricos() {
   const mes  = parseInt(document.getElementById('alq-mes')?.value  || (new Date().getMonth()+1));
   const anio = parseInt(document.getElementById('alq-anio')?.value || new Date().getFullYear());
   const props = alqGetStoredProps(mes, anio);
-  let actualizados = alqActualizarItemsDesdeValoresHistoricos(props, mes, anio);
-  actualizados = alqActualizarPeriodosItems(actualizados, mes, anio);
+  let actualizados = alqActualizarItemsDesdeValoresHistoricos(props.map(p => ({ ...p, _alqManual: false })), mes, anio);
   alqSaveProps(mes, anio, actualizados);
   renderAlquileresMensuales();
   showToast('Valores actualizados según Valores Históricos ✓');
@@ -3282,7 +3310,7 @@ function alqGetStoredProps(mes, anio) {
       copia = alqActualizarItemsDesdeValoresHistoricos(copia, mes, anio);
       // Actualizar automáticamente los períodos de TGI, Aguas, Expensas, etc.
       // según el tipo de concepto (mismo mes o mes anterior)
-      copia = alqActualizarPeriodosItems(copia, parseInt(mes), parseInt(anio));
+      copia = alqAvanzarPeriodosItems(copia, (parseInt(anio) - aBus) * 12 + (parseInt(mes) - mBus));
       // Noviembre 2026: se suman C88 y C42 y se quita C155 (ya no se alquila).
       if (alqMesPosterior(parseInt(mes), parseInt(anio), 11, 2026) && !alqMesPosterior(mBus, aBus, 11, 2026)) copia = alqAplicarCambiosNoviembre(copia, parseInt(mes), parseInt(anio));
       if (alqMesPosterior(parseInt(mes), parseInt(anio), 9, 2026)) copia = alqOrdenarLista(alqQuitarDuplicadosExactos(copia));
@@ -3837,6 +3865,13 @@ function alqGuardar(idx, mes, anio) {
     });
   }
   props[idx].items      = items;
+  try {
+    // ¿El alquiler fue cargado a mano (distinto de Valores Históricos)? Si es así, no se pisa solo.
+    if (props[idx].tipo === 'propiedad' && items[0] && /alquiler/i.test(items[0].desc || '')) {
+      const vh = buscarUltimoValorVigente(getValoresHistoricos(), String(props[idx].carpeta), String(anio), String(mes));
+      props[idx]._alqManual = (vh !== '' && vh != null && (parseFloat(vh) || 0) !== (parseFloat(items[0].val) || 0));
+    }
+  } catch (e) {}
   const gv = id => document.getElementById(id + idx);
   // Si la tarjeta no muestra estos campos (ej. efectivo), se conserva lo que ya tenía guardado.
   if (gv('alq_trans_prop_')) props[idx].trans_prop = parseFloat(gv('alq_trans_prop_').value) || null;
@@ -4099,7 +4134,8 @@ function renderAlquileresMensuales() {
   // Mes completo (sept. 2026 en adelante): sin duplicados exactos y ordenado
   // (cocheras primero, luego carpetas de menor a mayor). Se guarda si cambió.
   alqNormalizarMesGuardado(mes, anio);
-  const props = alqGetStoredProps(mes, anio);
+  let props = alqGetStoredProps(mes, anio);
+  { const sh = alqSincronizarHistoricosMes(props, mes, anio); if (sh.cambio) { props = sh.props; alqSaveProps(mes, anio, props); } }
   // Importes de transferencia calculados y guardados (solo donde no hay carga manual).
   alqPersistirTransferenciasMes(props, mes, anio);
   _alqPropsRender = props;
