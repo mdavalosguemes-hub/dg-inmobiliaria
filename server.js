@@ -219,6 +219,25 @@ function fusionarPorUnion(existentes, entrantes) {
 // también corrían el mismo riesgo (ej. prop_overrides/owner_overrides/
 // tenant_overrides: id -> {campos de esa propiedad/propietario/inquilino}).
 // Cualquier id que ya existía y no vino en este guardado se conserva.
+// Para prop_overrides / owner_overrides / tenant_overrides: cada id es un
+// registro completo con _updatedAt. Si el que ya está guardado es MÁS NUEVO,
+// una copia vieja de otra PC o pestaña no lo pisa.
+function fusionarOverridesPorSello(existente, entrante) {
+  const base = esObjetoPlano(existente) ? existente : {};
+  const resultado = Object.assign({}, base);
+  for (const [id, rec] of Object.entries(entrante || {})) {
+    const previo = base[id];
+    if (esObjetoPlano(rec) && esObjetoPlano(previo)) {
+      const tsE = Number(rec._updatedAt) || 0, tsP = Number(previo._updatedAt) || 0;
+      if (tsP > tsE) continue;                                  // lo guardado es más nuevo: se conserva
+      resultado[id] = tsE > 0 ? rec : fusionarObjetoProfundo(previo, rec);
+    } else {
+      resultado[id] = rec;
+    }
+  }
+  return resultado;
+}
+
 function fusionarObjetoProfundo(existente, entrante) {
   if (!esObjetoPlano(entrante)) return entrante; // valor final (numero/texto/etc): gana el entrante
   const base = esObjetoPlano(existente) ? existente : {};
@@ -394,7 +413,7 @@ async function guardarConFusion(key, value) {
   } else if (CLAVES_OBJETO_FUSIONABLE.includes(key) && esObjetoPlano(value)) {
     const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
     const existente = esObjetoPlano(rows[0] && rows[0].value) ? rows[0].value : {};
-    valorFinal = fusionarObjetoProfundo(existente, value);
+    valorFinal = key.endsWith('_overrides') ? fusionarOverridesPorSello(existente, value) : fusionarObjetoProfundo(existente, value);
   } else if (CLAVES_UNION_SIMPLE.includes(key) && esArrayDePrimitivos(value)) {
     const { rows } = await pool.query('SELECT value FROM kv_store WHERE key = $1', [key]);
     const existentes = Array.isArray(rows[0] && rows[0].value) ? rows[0].value : [];

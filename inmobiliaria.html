@@ -2374,8 +2374,17 @@ function setData(key, val) {
     const baseCarpetas = new Set(INIT_PROPS.map((p,i) => 'p_' + i));
     const overrides = {};
     const presentIds = new Set(val.map(p => String(p.id)));
+    const ovPrevios = JSON.parse(localStorage.getItem('prop_overrides') || '{}');
+    const sinTs = o => { const c = Object.assign({}, o); delete c._updatedAt; return JSON.stringify(c); };
     val.forEach(p => {
-      if (baseCarpetas.has(p.id)) overrides[p.id] = p;
+      if (baseCarpetas.has(p.id)) {
+        // Sello de última modificación: solo cambia si la propiedad cambió de verdad.
+        // Con eso el servidor distingue una edición nueva de una copia vieja de otra PC.
+        const prev = ovPrevios[p.id];
+        const cambio = !prev || sinTs(prev) !== sinTs(p);
+        overrides[p.id] = Object.assign({}, p, { _updatedAt: cambio ? nowTS() : (prev._updatedAt || p._updatedAt || 0) });
+        if (!overrides[p.id]._updatedAt) delete overrides[p.id]._updatedAt;
+      }
     });
     // Las propiedades base que ya no están presentes en val fueron eliminadas
     const deleted = Array.from(baseCarpetas).filter(id => !presentIds.has(String(id)));
@@ -2724,6 +2733,29 @@ function migrarEliminarPropiedadesDuplicadasV2() {
 
 // Elimina los propietarios "Sapag" repetidos que no tienen propiedades
 // asignadas, dejando solo el que tiene carpetas (borrado suave).
+// Repara propiedades cuya "próxima actualización" quedó atrasada aunque ya
+// existe su documento de actualización (la edición de la propiedad se perdió
+// al sincronizar). Solo corrige prox_act, nunca baja una fecha.
+function migrarProxActDesdeDocsV1() {
+  try {
+    const props = getData('prop_data');
+    const docs = visibles(getData('docajuste_data'));
+    let cambios = 0;
+    props.forEach(p => {
+      if (!p.carpeta || p.carpeta === '-' || !p.prox_act) return;
+      const fa = parseDate(p.prox_act); if (!fa) return;
+      const mejor = docs.filter(d => String(d.carpeta) === String(p.carpeta))
+        .map(d => parseDate(d.prox_act || d.hasta)).filter(Boolean).sort((a, b) => b - a)[0];
+      const desdeOk = docs.some(d => String(d.carpeta) === String(p.carpeta) && parseDate(d.desde) && parseDate(d.desde) >= new Date(fa.getFullYear(), fa.getMonth(), 1));
+      if (mejor && mejor > fa && desdeOk) {
+        const dd = String(mejor.getDate()).padStart(2, '0'), mm = String(mejor.getMonth() + 1).padStart(2, '0');
+        p.prox_act = `${dd}/${mm}/${mejor.getFullYear()}`; cambios++;
+      }
+    });
+    if (cambios) setData('prop_data', props);
+  } catch (e) { console.warn('migrarProxActDesdeDocsV1', e); }
+}
+
 function migrarEliminarSapagDuplicadosV1() {
   const FLAG = 'eliminar_sapag_duplicados_v1_done';
   if (localStorage.getItem(FLAG) === '1') return;
@@ -8031,7 +8063,29 @@ function getAjustes() {
     const fa=parseDate(p.prox_act); if(!fa) return null;
     const diffMonths=(fa.getFullYear()-nowYear)*12+(fa.getMonth()-nowMonth);
     return {...p, _fa:fa, _diffMonths:diffMonths};
-  }).filter(p=>p&&p._diffMonths>=0&&p._diffMonths<=1).sort((a,b)=>a._fa-b._fa);
+  }).filter(p=>p&&p._diffMonths>=0&&p._diffMonths<=1&&!ajusteYaHecho(p)).sort((a,b)=>a._fa-b._fa);
+}
+
+// Un ajuste ya está hecho si existe un documento de actualización (o un ajuste
+// proporcional) de esa carpeta que corresponde al mes de la fecha pendiente,
+// aunque la "próxima actualización" de la propiedad no se haya movido.
+function ajusteYaHecho(p) {
+  const fa = p._fa || parseDate(p.prox_act); if (!fa) return false;
+  const c = String(p.carpeta);
+  const clave = fa.getFullYear() * 12 + fa.getMonth();
+  const mesDe = v => { const d = parseDate(v); return d ? d.getFullYear() * 12 + d.getMonth() : null; };
+  let docs = [], props = [];
+  try { docs = visibles(getData('docajuste_data')); props = visibles(getData('ajprop_data')); } catch (e) {}
+  const porDoc = docs.some(d => {
+    if (String(d.carpeta) !== c) return false;
+    const m = mesDe(d.desde);
+    if (m !== null && m >= clave) return true;                 // rige desde ese mes (o después)
+    const pa = parseDate(d.prox_act || d.hasta);
+    return !!(pa && pa > fa);                                  // ya fijó una próxima fecha posterior
+  });
+  if (porDoc) return true;
+  const nomMes = (typeof MESES_NOM !== 'undefined' && MESES_NOM[fa.getMonth() + 1]) || '';
+  return props.some(d => String(d.carpeta) === c && nomMes && String(d.mes || '').toLowerCase() === nomMes.toLowerCase());
 }
 function renderAjustes() {
   const ajustes=getAjustes();
@@ -8831,6 +8885,7 @@ async function iniciarApp() {
   migrarValoresHistoricosRestauracionV3();
   migrarEliminarPropiedadesDuplicadasV2();
   migrarEliminarSapagDuplicadosV1();
+  migrarProxActDesdeDocsV1();
   migrarCorreccionFechaInicioV1();
   sincronizarAlquileresConMesActual();
   try { migrarAlqModalidadV1(); migrarAlqNoviembre2026V1(); alqNormalizarTodosLosMeses(); } catch (e) { console.warn('Alquileres mensuales (migraciones):', e); }
