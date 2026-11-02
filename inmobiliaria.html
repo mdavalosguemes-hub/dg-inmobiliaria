@@ -623,7 +623,7 @@
           <div class="form-group"><label>Fojas Nº</label>
             <select class="form-control" id="s_fojas" onchange="calcSellado()">
               <option value="">Seleccionar</option>
-              <option value="21">21</option><option value="24">24</option><option value="27">27</option>
+              <option value="21">21</option><option value="24">24</option><option value="27">27</option><option value="30">30</option><option value="33">33</option>
             </select>
           </div>
           <div class="form-group"><label>Valor total ($)</label><input type="number" class="form-control" id="s_valor" oninput="calcSellado()"></div>
@@ -4893,8 +4893,15 @@ function calcSellado() {
 }
 
 let selladoCurrentId = null;
+let selladoOriginal = null;   // registro tal como estaba guardado al abrir la edición
+let selladoSnap = null;       // valores del formulario al abrir (para saber qué cambió)
+function leerFormSellado() {
+  const v = id => document.getElementById(id).value;
+  return { orden: v('s_orden'), quincena: v('s_quincena'), direccion: v('s_direccion').trim(), tipo: v('s_tipo'),
+           fecha: v('s_fecha'), fojas: v('s_fojas'), valor: v('s_valor'), garantias: v('s_garantias'), sellado: v('s_sellado') };
+}
 function newSellado() {
-  selladoCurrentId = null;
+  selladoCurrentId = null; selladoOriginal = null; selladoSnap = null;
   document.getElementById('modal-sellado-title').textContent = 'Nuevo Sellado';
   document.getElementById('btn-del-sellado').style.display = 'none';
   document.getElementById('s_orden').value='';
@@ -4922,37 +4929,48 @@ function editSellado(id) {
   const anioSel = document.getElementById('s_anio_quincena');
   anioSel.innerHTML = [anioQuincena-1,anioQuincena,anioQuincena+1].map(a=>`<option value="${a}" ${a===Number(anioQuincena)?'selected':''}>${a}</option>`).join('');
   poblarQuincenasSellado();
-  document.getElementById('s_quincena').value = s.quincena||'';
+  // Si el valor guardado no está entre las opciones (ej. una foja, tipo o quincena
+  // distinta), se agrega la opción para que NO se pierda al guardar.
+  const asegurarOpcion = (id, val) => {
+    const el = document.getElementById(id);
+    if (val !== undefined && val !== null && String(val) !== '' && ![...el.options].some(o => o.value === String(val))) {
+      const o = document.createElement('option'); o.value = String(val); o.textContent = String(val); el.appendChild(o);
+    }
+    el.value = (val === undefined || val === null) ? '' : String(val);
+  };
+  asegurarOpcion('s_quincena', s.quincena);
   document.getElementById('s_direccion').value = s.direccion||'';
-  document.getElementById('s_tipo').value = s.tipo||'';
-  document.getElementById('s_fecha').value = s.fecha||'';
-  document.getElementById('s_fojas').value = s.fojas||'';
+  asegurarOpcion('s_tipo', s.tipo);
+  document.getElementById('s_fecha').value = s.fecha ? String(s.fecha).slice(0,10) : '';
+  asegurarOpcion('s_fojas', s.fojas);
   document.getElementById('s_valor').value = s.valor||'';
-  document.getElementById('s_garantias').value = s.garantias||'';
-  calcSellado();
+  asegurarOpcion('s_garantias', s.garantias);
+  // NO se recalcula el sellado al abrir: se muestra tal cual está guardado.
+  // Solo se recalcula si el usuario cambia tipo, fojas o valor.
+  document.getElementById('s_sellado').value = s.sellado||'';
+  selladoOriginal = JSON.parse(JSON.stringify(s));
+  selladoSnap = leerFormSellado();
   openModal('modal-sellado');
 }
 function saveSellado() {
   const direccion = document.getElementById('s_direccion').value.trim();
   if (!direccion) { showToast('Ingresá la dirección del inmueble','error'); return; }
-  const doc = {
-    id: selladoCurrentId || ('s_'+Date.now()),
-    orden: document.getElementById('s_orden').value,
-    quincena: document.getElementById('s_quincena').value,
-    direccion,
-    tipo: document.getElementById('s_tipo').value,
-    fecha: document.getElementById('s_fecha').value,
-    fojas: document.getElementById('s_fojas').value,
-    valor: document.getElementById('s_valor').value,
-    garantias: document.getElementById('s_garantias').value,
-    sellado: document.getElementById('s_sellado').value,
-    _updatedAt: nowTS()
-  };
+  const actual = leerFormSellado();
+  let doc;
+  if (selladoCurrentId && selladoOriginal && selladoSnap) {
+    // Edición: se parte del registro guardado y se modifica SOLO lo que el usuario cambió.
+    doc = Object.assign({}, selladoOriginal);
+    Object.keys(actual).forEach(k => { if (actual[k] !== selladoSnap[k]) doc[k] = actual[k]; });
+    doc.id = selladoOriginal.id;
+  } else {
+    doc = Object.assign({ id: selladoCurrentId || ('s_'+Date.now()) }, actual);
+  }
+  doc._updatedAt = nowTS();
   const data = getSelladosData();
   const idx = data.findIndex(x=>String(x.id)===String(doc.id));
   if (idx>=0) data[idx]=doc; else data.push(doc);
   setSelladosData(data);
-  selladoCurrentId = null;
+  selladoCurrentId = null; selladoOriginal = null; selladoSnap = null;
   closeModal('modal-sellado');
   renderSellados();
   showToast('Sellado guardado ✓');
