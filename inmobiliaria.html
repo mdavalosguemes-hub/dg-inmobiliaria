@@ -9654,6 +9654,12 @@ window._syncTieneError = false;
 
 async function _postToServer(key, val, attempt) {
   attempt = attempt || 1;
+  // Número de guardado de esta clave: si mientras la respuesta viaja se hace otro
+  // guardado (ej. cargar un monto justo después de agregar una propiedad), la
+  // respuesta vieja NO debe pisar lo nuevo que se acaba de escribir.
+  window._saveSeq = window._saveSeq || {};
+  if (attempt === 1) window._saveSeq[key] = (window._saveSeq[key] || 0) + 1;
+  const miSeq = window._saveSeq[key];
   if (window._pendingSaves === 0) { window._syncTieneError = false; _actualizarBadgeGuardado('guardando'); }
   window._pendingSaves++;
   // Registrar como pendiente ANTES de intentar mandarlo: así, si se cierra la
@@ -9675,6 +9681,10 @@ async function _postToServer(key, val, attempt) {
     try {
       const data = await res.json();
       if (data && data.value !== undefined && JSON.stringify(data.value) !== JSON.stringify(val)) {
+        if (window._saveSeq[key] !== miSeq) return; // hubo un guardado más nuevo: su respuesta traerá todo fusionado
+        if (key === 'facturas_data' && Array.isArray(data.value)) {
+          data.value.sort((a,b) => (parseFloat(a.carpeta)||0) - (parseFloat(b.carpeta)||0));
+        }
         _setDataOrig(key, data.value);
         if (typeof onDatosFusionadosDesdeServidor === 'function') onDatosFusionadosDesdeServidor(key);
       }
