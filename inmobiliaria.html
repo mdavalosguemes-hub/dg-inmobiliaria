@@ -5784,7 +5784,7 @@ function liqMakeFilaHTML(idx, prop) {
         <button class="btn btn-danger btn-sm" onclick="liqQuitarFila(${idx})" title="Quitar" style="margin-bottom:2px">✕</button>
       </div>
       <div id="lf_warn_${idx}"></div>
-      <!-- Fila 2: Impuestos/Arreglos (fijo) + 6 extras suma/resta -->
+      <!-- Fila 2: Impuestos/Arreglos (fijo) + 8 extras suma/resta -->
       <div style="margin-top:10px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:10px;align-items:start">
         <div class="form-group" style="margin:0;min-width:0">
           <label style="font-size:10px">Impuestos/Arreglos $</label>
@@ -5794,7 +5794,7 @@ function liqMakeFilaHTML(idx, prop) {
         <div style="min-width:0">
           <div style="font-size:10px;font-weight:600;color:#888;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">Extras</div>
           <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px">
-            ${Array.from({length:6},(_,ei)=>`
+            ${Array.from({length:8},(_,ei)=>`
             <div style="display:grid;grid-template-columns:minmax(0,1fr) 100px;gap:3px;align-items:center">
               <input type="text" class="form-control" id="lf_ed_${idx}_${ei}" placeholder="Descripción" style="font-size:11px;width:100%;box-sizing:border-box" oninput="calcFilaLiq(${idx})">
               <input type="number" class="form-control" id="lf_em_${idx}_${ei}" placeholder="$ (neg. resta)" style="font-size:11px;width:100%;box-sizing:border-box" oninput="calcFilaLiq(${idx})">
@@ -5872,7 +5872,7 @@ function calcFilaLiq(idx) {
   const imp = parseFloat(document.getElementById('lf_imp_'+idx)?.value)||0;
   const sub = alq - com;
   let ajuste = 0;
-  for (let ei=0; ei<6; ei++) {
+  for (let ei=0; ei<8; ei++) {
     const monto = parseFloat(document.getElementById('lf_em_'+idx+'_'+ei)?.value)||0;
     ajuste += monto; // negativo resta, positivo suma
   }
@@ -5983,7 +5983,7 @@ function editLiquidacionGrupo(grupoId) {
     setV('lf_obs_'+idx, l.obs);
     // Extras
     (l.extras||[]).forEach((ex, ei) => {
-      if (ei >= 6) return;
+      if (ei >= 8) return;
       setV('lf_ed_'+idx+'_'+ei, ex.desc);
       // Compatibilidad con datos viejos: si tenia signo '-', guardar como negativo
       const montoVal = (ex.signo==='-' && ex.monto > 0) ? -Math.abs(ex.monto) : (ex.monto||0);
@@ -6037,7 +6037,7 @@ function saveLiquidacionGrupo() {
     const periodoLocal = document.getElementById('lf_per_'+idx)?.value?.trim()||periodoG;
     const extras = [];
     let ajuste = 0;
-    for (let ei=0; ei<6; ei++) {
+    for (let ei=0; ei<8; ei++) {
       const desc  = document.getElementById('lf_ed_'+idx+'_'+ei)?.value?.trim()||'';
       const monto = parseFloat(document.getElementById('lf_em_'+idx+'_'+ei)?.value)||0;
       if (desc || monto) {
