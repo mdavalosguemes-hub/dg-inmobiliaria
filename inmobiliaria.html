@@ -2909,6 +2909,30 @@ function migrarValoresHistoricosSeedExcel() {
 // propiedad (guardado directo, ajuste o renovación), para ir dejando
 // registro mes a mes. El usuario igual puede editar cualquier valor a mano
 // desde la pestaña "Valores Históricos".
+// El alquiler del contrato de la propiedad (Contrato > Valor alquiler actual,
+// Comisión, Gastos) debe ser SIEMPRE el valor vigente en el mes corriente según
+// Valores Históricos (que a su vez recibe los ajustes, ajustes proporcionales y
+// renovaciones, cada uno en el mes en que rige). Devuelve true si lo aplicó.
+function aplicarAlquilerVigenteAProp(p, carpeta) {
+  const hoy = new Date();
+  const valor = buscarUltimoValorVigente(getValoresHistoricos(), String(carpeta), String(hoy.getFullYear()), String(hoy.getMonth() + 1));
+  if (valor === '' || valor === undefined || valor === null) return false;
+  const alquiler = parseFloat(valor) || 0;
+  if (!(alquiler > 0)) return false;
+  p.alquiler = String(alquiler);
+  p.comision = String(Math.ceil((alquiler * 0.08) / 100) * 100);
+  p.gastos   = String(Math.ceil((alquiler * 0.03) / 100) * 100);
+  return true;
+}
+
+// ¿La fecha cae en un mes posterior al mes corriente?
+function fechaEsMesFuturo(fecha) {
+  const d = (fecha instanceof Date) ? fecha : parseDate(fecha);
+  if (!d || isNaN(d)) return false;
+  const hoy = new Date();
+  return (d.getFullYear() * 12 + d.getMonth()) > (hoy.getFullYear() * 12 + hoy.getMonth());
+}
+
 function registrarValorHistoricoAutomatico(carpeta, alquiler, fechaRef) {
   if (!carpeta || !alquiler) return;
   let d = null;
@@ -7928,13 +7952,14 @@ function saveDocRenov() {
   if(pIdx>=0) {
     const p=props[pIdx];
     if(alq>0) {
-      p.alquiler=String(alq);
       p.monto_inicial=String(alq);
-      // Comisión 8% redondeado de a $100 hacia arriba
-      p.comision=String(Math.ceil(alq*0.08/100)*100);
-      // Gastos admin 3% redondeado de a $100 hacia arriba
-      p.gastos=String(Math.ceil(alq*0.03/100)*100);
       registrarValorHistoricoAutomatico(carpeta, alq, doc.inicio);
+      const aplicado = aplicarAlquilerVigenteAProp(p, carpeta);
+      if(!aplicado && !fechaEsMesFuturo(doc.inicio)) {
+        p.alquiler=String(alq);
+        p.comision=String(Math.ceil(alq*0.08/100)*100);
+        p.gastos=String(Math.ceil(alq*0.03/100)*100);
+      }
     }
     if(doc.inicio) p.fecha_inicio=doc.inicio.includes('-')?(()=>{const[y,m,d]=doc.inicio.split('-');return`${d}/${m}/${y}`;})():doc.inicio;
     if(doc.fin)    p.fecha_fin   =doc.fin.includes('-')   ?(()=>{const[y,m,d]=doc.fin.split('-');   return`${d}/${m}/${y}`;})():doc.fin;
@@ -8390,12 +8415,16 @@ function saveDocAjuste() {
     const p=props[pIdx];
     const alqNuevo=parseFloat(doc.alq_nuevo)||0;
     if(alqNuevo>0) {
-      p.alquiler=String(alqNuevo);
-      // Comisión 8% redondeado de a $100 hacia arriba
-      p.comision=String(Math.ceil(alqNuevo*0.08/100)*100);
-      // Gastos admin 3% redondeado de a $100 hacia arriba
-      p.gastos=String(Math.ceil(alqNuevo*0.03/100)*100);
+      // El nuevo monto rige DESDE el mes elegido: se registra en Valores
+      // Históricos en ese mes, y el contrato muestra el valor vigente HOY
+      // (no el futuro) según Valores Históricos.
       registrarValorHistoricoAutomatico(carpeta, alqNuevo, doc.desde);
+      const aplicado = aplicarAlquilerVigenteAProp(p, carpeta);
+      if(!aplicado && !fechaEsMesFuturo(doc.desde)) {
+        p.alquiler=String(alqNuevo);
+        p.comision=String(Math.ceil(alqNuevo*0.08/100)*100);
+        p.gastos=String(Math.ceil(alqNuevo*0.03/100)*100);
+      }
     }
     const tipoAjusteDocEl = document.getElementById('da_tipo_ajuste');
     // === SINCRONIZAR TIPO DE AJUSTE ===
@@ -11588,7 +11617,13 @@ function saveAjusteProp() {
   // proporcionales no registra año explícito).
   const mesNum = MESES_NOM.indexOf(mes);
   if (mesNum > 0) {
-    const fechaAjusteProp = new Date(new Date().getFullYear(), mesNum - 1, 1);
+    // Año del mes elegido: si el mes cae dentro de los próximos 6 meses (ej.
+    // se carga en noviembre un proporcional de enero) corresponde al año
+    // siguiente; si no, es del año en curso.
+    const hoyAP = new Date();
+    const adelante = ((mesNum - 1) - hoyAP.getMonth() + 12) % 12;
+    const anioAP = hoyAP.getFullYear() + (((mesNum - 1) < hoyAP.getMonth() && adelante <= 6) ? 1 : 0);
+    const fechaAjusteProp = new Date(anioAP, mesNum - 1, 1);
     registrarValorHistoricoAutomatico(carpeta, doc.alquiler, fechaAjusteProp);
   }
   ajpropCurrentId = null;
