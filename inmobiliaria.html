@@ -2933,6 +2933,38 @@ function fechaEsMesFuturo(fecha) {
   return (d.getFullYear() * 12 + d.getMonth()) > (hoy.getFullYear() * 12 + hoy.getMonth());
 }
 
+// Interpreta el campo "Mes de aplicación" (ej. "DICIEMBRE", "Enero 2027") y
+// devuelve {anio, mes}. Si no trae año, se elige el año en que ese mes queda
+// más cerca de la fecha de referencia (ej. con referencia diciembre 2026,
+// "ENERO" es enero 2027; con referencia noviembre 2026, "OCTUBRE" es octubre 2026).
+function resolverMesAplicacion(texto, refFecha) {
+  const t = String(texto || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (!t.trim()) return null;
+  const nombres = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  let mes = nombres.findIndex(n => t.includes(n)) + 1;
+  if (!mes && t.includes('setiembre')) mes = 9;
+  if (!mes) return null;
+  const mAnio = t.match(/(20\d{2})/);
+  if (mAnio) return { anio: parseInt(mAnio[1], 10), mes };
+  let ref = (refFecha instanceof Date) ? refFecha : (refFecha ? parseDate(refFecha) : null);
+  if (!ref || isNaN(ref)) ref = new Date();
+  const refIdx = ref.getFullYear() * 12 + ref.getMonth();
+  let mejor = null;
+  [ref.getFullYear() - 1, ref.getFullYear(), ref.getFullYear() + 1].forEach(a => {
+    const dist = Math.abs((a * 12 + (mes - 1)) - refIdx);
+    if (!mejor || dist < mejor.dist || (dist === mejor.dist && a > mejor.anio)) mejor = { anio: a, dist };
+  });
+  return { anio: mejor.anio, mes };
+}
+
+// Registra el valor en Valores Históricos SOLO en el mes de aplicación elegido
+// (no toca los demás meses). Si el campo está vacío o no se entiende, usa la fecha.
+function registrarValorHistoricoPorMesAplicacion(carpeta, alquiler, mesTexto, fechaRef) {
+  const r = resolverMesAplicacion(mesTexto, fechaRef);
+  if (!r) return registrarValorHistoricoAutomatico(carpeta, alquiler, fechaRef);
+  registrarValorHistoricoAutomatico(carpeta, alquiler, new Date(r.anio, r.mes - 1, 1));
+}
+
 function registrarValorHistoricoAutomatico(carpeta, alquiler, fechaRef) {
   if (!carpeta || !alquiler) return;
   let d = null;
@@ -8418,9 +8450,12 @@ function saveDocAjuste() {
       // El nuevo monto rige DESDE el mes elegido: se registra en Valores
       // Históricos en ese mes, y el contrato muestra el valor vigente HOY
       // (no el futuro) según Valores Históricos.
-      registrarValorHistoricoAutomatico(carpeta, alqNuevo, doc.desde);
+      // El mes se toma de "Mes de aplicación"; si está vacío, de "Desde".
+      registrarValorHistoricoPorMesAplicacion(carpeta, alqNuevo, doc.mes_aplica, doc.desde);
+      const _mesApl = resolverMesAplicacion(doc.mes_aplica, doc.desde);
+      const _futuro = _mesApl ? ((_mesApl.anio * 12 + _mesApl.mes - 1) > (new Date().getFullYear() * 12 + new Date().getMonth())) : fechaEsMesFuturo(doc.desde);
       const aplicado = aplicarAlquilerVigenteAProp(p, carpeta);
-      if(!aplicado && !fechaEsMesFuturo(doc.desde)) {
+      if(!aplicado && !_futuro) {
         p.alquiler=String(alqNuevo);
         p.comision=String(Math.ceil(alqNuevo*0.08/100)*100);
         p.gastos=String(Math.ceil(alqNuevo*0.03/100)*100);
@@ -11617,13 +11652,9 @@ function saveAjusteProp() {
   // proporcionales no registra año explícito).
   const mesNum = MESES_NOM.indexOf(mes);
   if (mesNum > 0) {
-    // Año del mes elegido: si el mes cae dentro de los próximos 6 meses (ej.
-    // se carga en noviembre un proporcional de enero) corresponde al año
-    // siguiente; si no, es del año en curso.
-    const hoyAP = new Date();
-    const adelante = ((mesNum - 1) - hoyAP.getMonth() + 12) % 12;
-    const anioAP = hoyAP.getFullYear() + (((mesNum - 1) < hoyAP.getMonth() && adelante <= 6) ? 1 : 0);
-    const fechaAjusteProp = new Date(anioAP, mesNum - 1, 1);
+    // Año del mes elegido: el año en que ese mes queda más cerca de hoy.
+    const _r = resolverMesAplicacion(mes, new Date());
+    const fechaAjusteProp = new Date(_r ? _r.anio : new Date().getFullYear(), mesNum - 1, 1);
     registrarValorHistoricoAutomatico(carpeta, doc.alquiler, fechaAjusteProp);
   }
   ajpropCurrentId = null;
